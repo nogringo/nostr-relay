@@ -47,7 +47,7 @@ func main() {
 	relay.Info.PubKey = cfg.RelayPubKey
 	relay.Info.Contact = cfg.RelayContact
 	relay.Info.SupportedNIPs = []any{1, 2, 4, 9, 11, 12, 15, 16, 17, 20, 22, 33, 40, 42, 45, 59, 77}
-	relay.Info.Software = "https://github.com/ultra-relay/nostr-relay"
+	relay.Info.Software = "https://github.com/nogringo/nostr-relay"
 	relay.Info.Version = "0.2.0"
 
 	// Setup all handlers
