@@ -1,4 +1,4 @@
-# Ghost Relay
+# nostr-relay
 
 A high-performance Nostr relay with full support for private messaging (NIP-17/59) and efficient sync (NIP-77).
 
@@ -36,7 +36,7 @@ A high-performance Nostr relay with full support for private messaging (NIP-17/5
 ```bash
 # Clone
 git clone https://github.com/nogringo/nostr-relay
-cd ghost-relay
+cd nostr-relay
 
 # Run
 go run ./cmd/relay
@@ -58,7 +58,7 @@ RELAY_HOST=0.0.0.0
 RELAY_DATA_PATH=./data
 
 # Relay Info (NIP-11)
-RELAY_NAME="Ghost Relay"
+RELAY_NAME="nostr-relay"
 RELAY_DESCRIPTION="Privacy-focused Nostr relay"
 RELAY_PUBKEY=<your_pubkey>
 RELAY_CONTACT=<your_contact>
@@ -77,10 +77,10 @@ RELAY_RATE_LIMIT=100
 
 ```bash
 # Build
-docker build -t ghost-relay .
+docker build -t nostr-relay .
 
 # Run
-docker run -p 3334:3334 -v ./data:/app/data ghost-relay
+docker run -p 3334:3334 -v ./data:/app/data nostr-relay
 ```
 
 ## Security
@@ -108,7 +108,7 @@ REQ ["kinds": [1059], "#p": ["<pubkey>"]] -> OK (if authenticated as pubkey)
 ## Architecture
 
 ```
-ghost-relay/
+nostr-relay/
 ├── cmd/relay/main.go           # Entry point
 ├── config/config.go            # Configuration
 ├── internal/

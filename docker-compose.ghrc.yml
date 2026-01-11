@@ -1,0 +1,15 @@
+services:
+  relay:
+    image: ghcr.io/nogringo/nostr-relay:main
+    container_name: nostr-relay
+    restart: unless-stopped
+    ports:
+      - "3334:3334"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - RELAY_NAME=nostr-relay
+      - RELAY_DESCRIPTION=Privacy-focused Nostr relay
+      - RELAY_PUBKEY=
+      - RELAY_CONTACT=
+      - RELAY_REQUIRE_AUTH=false

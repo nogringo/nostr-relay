@@ -131,21 +131,21 @@ func (s *BadgerStore) DeleteEvent(ctx context.Context, event *nostr.Event) error
 			return err
 		}
 
-		// Delete indexes (we need to delete all possible index entries)
+		// Delete indexes (ignore errors - indexes may not exist)
 		pubkeyKey := fmt.Sprintf("%s%s:%d:%s", prefixByPubkey, event.PubKey, event.CreatedAt.Time().Unix(), event.ID)
-		txn.Delete([]byte(pubkeyKey))
+		_ = txn.Delete([]byte(pubkeyKey))
 
 		kindKey := fmt.Sprintf("%s%d:%d:%s", prefixByKind, event.Kind, event.CreatedAt.Time().Unix(), event.ID)
-		txn.Delete([]byte(kindKey))
+		_ = txn.Delete([]byte(kindKey))
 
 		for _, tag := range event.Tags {
 			if len(tag) >= 2 {
 				tagKey := fmt.Sprintf("%s%s:%s:%d:%s", prefixByTag, tag[0], tag[1], event.CreatedAt.Time().Unix(), event.ID)
-				txn.Delete([]byte(tagKey))
+				_ = txn.Delete([]byte(tagKey))
 
 				if event.Kind == 1059 && tag[0] == "p" {
 					giftKey := fmt.Sprintf("%s%s:%s", prefixGiftWrap, tag[1], event.ID)
-					txn.Delete([]byte(giftKey))
+					_ = txn.Delete([]byte(giftKey))
 				}
 			}
 		}
