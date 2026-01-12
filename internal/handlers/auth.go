@@ -15,6 +15,11 @@ import (
 // Kind 22242 is used for client authentication
 
 func SetupAuthHandlers(relay *khatru.Relay, cfg *config.Config) {
+	// NIP-42: Send AUTH challenge on connection so clients can authenticate when they want
+	relay.OnConnect = append(relay.OnConnect, func(ctx context.Context) {
+		khatru.RequestAuth(ctx)
+	})
+
 	// NIP-59: ALWAYS protect gift wraps - only recipient can query them
 	// This is independent of RequireAuth setting
 	relay.RejectFilter = append(relay.RejectFilter, func(ctx context.Context, filter nostr.Filter) (bool, string) {
