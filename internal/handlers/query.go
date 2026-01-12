@@ -24,41 +24,68 @@ func SetupQueryHandlers(relay *khatru.Relay, store *storage.BadgerStore) {
 				return
 			}
 
-			log.Debug().
-				Int("count", len(events)).
-				Msg("Query returned events")
+			// Get authenticated pubkey for filtering private events
+			authedPubkey := khatru.GetAuthed(ctx)
 
+			// Filter events before sending
+			filteredCount := 0
 			for _, event := range events {
+				// NIP-59: Filter private message kinds (gift wrap, seal, DM)
+				if event.Kind == 1059 || event.Kind == 13 || event.Kind == 14 {
+					// Must be authenticated
+					if authedPubkey == "" {
+						log.Debug().
+							Int("kind", event.Kind).
+							Str("event_id", event.ID[:16]).
+							Msg("Filtered private event - user not authenticated")
+						filteredCount++
+						continue
+					}
+
+					// For gift wraps, user must be the recipient (p tag)
+					if event.Kind == 1059 {
+						isRecipient := false
+						for _, tag := range event.Tags {
+							if len(tag) >= 2 && tag[0] == "p" && tag[1] == authedPubkey {
+								isRecipient = true
+								break
+							}
+						}
+						if !isRecipient {
+							log.Debug().
+								Int("kind", event.Kind).
+								Str("event_id", event.ID[:16]).
+								Msg("Filtered gift wrap - user is not recipient")
+							filteredCount++
+							continue
+						}
+					}
+				}
+
 				select {
 				case ch <- event:
 				case <-ctx.Done():
 					return
 				}
 			}
+
+			log.Debug().
+				Int("total", len(events)).
+				Int("filtered", filteredCount).
+				Int("sent", len(events)-filteredCount).
+				Msg("Query returned events")
 		}()
 
 		return ch, nil
 	})
 
-	// Reject certain filters
-	relay.RejectFilter = append(relay.RejectFilter, func(ctx context.Context, filter nostr.Filter) (bool, string) {
-		// Reject filters that are too broad (no specific criteria)
-		if len(filter.IDs) == 0 &&
-			len(filter.Authors) == 0 &&
-			len(filter.Kinds) == 0 &&
-			len(filter.Tags) == 0 &&
-			filter.Since == nil &&
-			filter.Until == nil &&
-			filter.Limit == 0 {
-			return true, "error: filter too broad, please specify at least one criterion"
+	// Apply default and max limits
+	relay.OverwriteFilter = append(relay.OverwriteFilter, func(ctx context.Context, filter *nostr.Filter) {
+		if filter.Limit == 0 {
+			filter.Limit = 500
+		} else if filter.Limit > 5000 {
+			filter.Limit = 5000
 		}
-
-		// Limit excessive requests
-		if filter.Limit > 5000 {
-			return true, "error: limit too high, max 5000"
-		}
-
-		return false, ""
 	})
 
 	// Count events

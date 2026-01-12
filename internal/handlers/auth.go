@@ -26,19 +26,8 @@ func SetupAuthHandlers(relay *khatru.Relay, cfg *config.Config) {
 					khatru.RequestAuth(ctx)
 					return true, "auth-required: authentication required to query private messages"
 				}
-
-				// For gift wraps, user must be the recipient (p tag)
-				if kind == 1059 {
-					if pTags, ok := filter.Tags["p"]; ok {
-						for _, p := range pTags {
-							if p == authedPubkey {
-								return false, "" // OK - querying own gift wraps
-							}
-						}
-					}
-					// No p tag filter or not matching - reject
-					return true, "restricted: can only query gift wraps addressed to you (use #p filter)"
-				}
+				// User is authenticated - QueryEvents will filter to only return their gift wraps
+				return false, ""
 			}
 		}
 		return false, ""
