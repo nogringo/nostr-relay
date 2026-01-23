@@ -139,10 +139,6 @@ make test
 make clean
 ```
 
-## License
-
-MIT
-
 ## Credits
 
 Built with [khatru](https://github.com/fiatjaf/khatru) framework.
