@@ -7,8 +7,9 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/nbd-wtf/go-nostr"
 	"github.com/rs/zerolog/log"
+
+	"fiatjaf.com/nostr"
 )
 
 type BadgerStore struct {
@@ -53,11 +54,11 @@ func (s *BadgerStore) runGC() {
 
 // Key prefixes for different indexes
 const (
-	prefixEvent     = "e:" // e:<event_id> -> event JSON
-	prefixByPubkey  = "p:" // p:<pubkey>:<created_at>:<event_id> -> event_id
-	prefixByKind    = "k:" // k:<kind>:<created_at>:<event_id> -> event_id
-	prefixByTag     = "t:" // t:<tag>:<value>:<created_at>:<event_id> -> event_id
-	prefixGiftWrap  = "g:" // g:<recipient_pubkey>:<event_id> -> event_id (NIP-59)
+	prefixEvent    = "e:" // e:<event_id> -> event JSON
+	prefixByPubkey = "p:" // p:<pubkey>:<created_at>:<event_id> -> event_id
+	prefixByKind   = "k:" // k:<kind>:<created_at>:<event_id> -> event_id
+	prefixByTag    = "t:" // t:<tag>:<value>:<created_at>:<event_id> -> event_id
+	prefixGiftWrap = "g:" // g:<recipient_pubkey>:<event_id> -> event_id (NIP-59)
 )
 
 func (s *BadgerStore) SaveEvent(ctx context.Context, event *nostr.Event) error {
@@ -66,9 +67,12 @@ func (s *BadgerStore) SaveEvent(ctx context.Context, event *nostr.Event) error {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
 
+	eventID := event.ID.Hex()
+	pubkeyHex := event.PubKey.Hex()
+
 	return s.db.Update(func(txn *badger.Txn) error {
 		// Check if event already exists
-		eventKey := []byte(prefixEvent + event.ID)
+		eventKey := []byte(prefixEvent + eventID)
 		_, err := txn.Get(eventKey)
 		if err == nil {
 			return nil // Event already exists
@@ -80,29 +84,29 @@ func (s *BadgerStore) SaveEvent(ctx context.Context, event *nostr.Event) error {
 		}
 
 		// Index by pubkey
-		pubkeyKey := fmt.Sprintf("%s%s:%d:%s", prefixByPubkey, event.PubKey, event.CreatedAt.Time().Unix(), event.ID)
-		if err := txn.Set([]byte(pubkeyKey), []byte(event.ID)); err != nil {
+		pubkeyKey := fmt.Sprintf("%s%s:%d:%s", prefixByPubkey, pubkeyHex, event.CreatedAt.Time().Unix(), eventID)
+		if err := txn.Set([]byte(pubkeyKey), []byte(eventID)); err != nil {
 			return err
 		}
 
 		// Index by kind
-		kindKey := fmt.Sprintf("%s%d:%d:%s", prefixByKind, event.Kind, event.CreatedAt.Time().Unix(), event.ID)
-		if err := txn.Set([]byte(kindKey), []byte(event.ID)); err != nil {
+		kindKey := fmt.Sprintf("%s%d:%d:%s", prefixByKind, event.Kind, event.CreatedAt.Time().Unix(), eventID)
+		if err := txn.Set([]byte(kindKey), []byte(eventID)); err != nil {
 			return err
 		}
 
 		// Index tags (for NIP-59 gift wrap, we index the 'p' tag specially)
 		for _, tag := range event.Tags {
 			if len(tag) >= 2 {
-				tagKey := fmt.Sprintf("%s%s:%s:%d:%s", prefixByTag, tag[0], tag[1], event.CreatedAt.Time().Unix(), event.ID)
-				if err := txn.Set([]byte(tagKey), []byte(event.ID)); err != nil {
+				tagKey := fmt.Sprintf("%s%s:%s:%d:%s", prefixByTag, tag[0], tag[1], event.CreatedAt.Time().Unix(), eventID)
+				if err := txn.Set([]byte(tagKey), []byte(eventID)); err != nil {
 					return err
 				}
 
 				// Special index for gift wraps (kind 1059)
 				if event.Kind == 1059 && tag[0] == "p" {
-					giftKey := fmt.Sprintf("%s%s:%s", prefixGiftWrap, tag[1], event.ID)
-					if err := txn.Set([]byte(giftKey), []byte(event.ID)); err != nil {
+					giftKey := fmt.Sprintf("%s%s:%s", prefixGiftWrap, tag[1], eventID)
+					if err := txn.Set([]byte(giftKey), []byte(eventID)); err != nil {
 						return err
 					}
 				}
@@ -114,8 +118,11 @@ func (s *BadgerStore) SaveEvent(ctx context.Context, event *nostr.Event) error {
 }
 
 func (s *BadgerStore) DeleteEvent(ctx context.Context, event *nostr.Event) error {
+	eventID := event.ID.Hex()
+	pubkeyHex := event.PubKey.Hex()
+
 	return s.db.Update(func(txn *badger.Txn) error {
-		eventKey := []byte(prefixEvent + event.ID)
+		eventKey := []byte(prefixEvent + eventID)
 
 		// Check if event exists
 		_, err := txn.Get(eventKey)
@@ -132,19 +139,19 @@ func (s *BadgerStore) DeleteEvent(ctx context.Context, event *nostr.Event) error
 		}
 
 		// Delete indexes (ignore errors - indexes may not exist)
-		pubkeyKey := fmt.Sprintf("%s%s:%d:%s", prefixByPubkey, event.PubKey, event.CreatedAt.Time().Unix(), event.ID)
+		pubkeyKey := fmt.Sprintf("%s%s:%d:%s", prefixByPubkey, pubkeyHex, event.CreatedAt.Time().Unix(), eventID)
 		_ = txn.Delete([]byte(pubkeyKey))
 
-		kindKey := fmt.Sprintf("%s%d:%d:%s", prefixByKind, event.Kind, event.CreatedAt.Time().Unix(), event.ID)
+		kindKey := fmt.Sprintf("%s%d:%d:%s", prefixByKind, event.Kind, event.CreatedAt.Time().Unix(), eventID)
 		_ = txn.Delete([]byte(kindKey))
 
 		for _, tag := range event.Tags {
 			if len(tag) >= 2 {
-				tagKey := fmt.Sprintf("%s%s:%s:%d:%s", prefixByTag, tag[0], tag[1], event.CreatedAt.Time().Unix(), event.ID)
+				tagKey := fmt.Sprintf("%s%s:%s:%d:%s", prefixByTag, tag[0], tag[1], event.CreatedAt.Time().Unix(), eventID)
 				_ = txn.Delete([]byte(tagKey))
 
 				if event.Kind == 1059 && tag[0] == "p" {
-					giftKey := fmt.Sprintf("%s%s:%s", prefixGiftWrap, tag[1], event.ID)
+					giftKey := fmt.Sprintf("%s%s:%s", prefixGiftWrap, tag[1], eventID)
 					_ = txn.Delete([]byte(giftKey))
 				}
 			}
@@ -152,6 +159,18 @@ func (s *BadgerStore) DeleteEvent(ctx context.Context, event *nostr.Event) error
 
 		return nil
 	})
+}
+
+func (s *BadgerStore) DeleteEventByID(ctx context.Context, id string) error {
+	// First get the event to clean up indexes
+	event, err := s.GetEvent(ctx, id)
+	if err != nil {
+		return err
+	}
+	if event == nil {
+		return nil // Event doesn't exist
+	}
+	return s.DeleteEvent(ctx, event)
 }
 
 func (s *BadgerStore) GetEvent(ctx context.Context, id string) (*nostr.Event, error) {
@@ -192,8 +211,8 @@ func (s *BadgerStore) QueryEvents(ctx context.Context, filter nostr.Filter) ([]*
 		case len(filter.IDs) > 0:
 			// Query by specific IDs
 			for _, id := range filter.IDs {
-				event, err := s.getEventByID(txn, id)
-				if err == nil && event != nil && filter.Matches(event) {
+				event, err := s.getEventByID(txn, id.Hex())
+				if err == nil && event != nil && filter.Matches(*event) {
 					events = append(events, event)
 					if len(events) >= limit {
 						return nil
@@ -205,7 +224,7 @@ func (s *BadgerStore) QueryEvents(ctx context.Context, filter nostr.Filter) ([]*
 		case len(filter.Authors) > 0:
 			// Query by author pubkey
 			for _, author := range filter.Authors {
-				prefix = prefixByPubkey + author + ":"
+				prefix = prefixByPubkey + author.Hex() + ":"
 				if err := s.scanIndex(txn, prefix, filter, &events, limit); err != nil {
 					return err
 				}
@@ -259,8 +278,9 @@ func (s *BadgerStore) QueryEvents(ctx context.Context, filter nostr.Filter) ([]*
 				if err != nil {
 					continue
 				}
-				if filter.Matches(&event) {
-					events = append(events, &event)
+				if filter.Matches(event) {
+					eventCopy := event
+					events = append(events, &eventCopy)
 				}
 			}
 			return nil
@@ -312,7 +332,7 @@ func (s *BadgerStore) scanIndex(txn *badger.Txn, prefix string, filter nostr.Fil
 			continue
 		}
 
-		if filter.Matches(event) {
+		if filter.Matches(*event) {
 			*events = append(*events, event)
 		}
 	}

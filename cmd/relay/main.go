@@ -13,7 +13,8 @@ import (
 	"nostr-relay/internal/handlers"
 	"nostr-relay/internal/storage"
 
-	"github.com/fiatjaf/khatru"
+	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/khatru"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -44,27 +45,34 @@ func main() {
 	// Relay info (NIP-11)
 	relay.Info.Name = cfg.RelayName
 	relay.Info.Description = cfg.RelayDescription
-	relay.Info.PubKey = cfg.RelayPubKey
+	if cfg.RelayPubKey != "" {
+		pubkey, err := nostr.PubKeyFromHex(cfg.RelayPubKey)
+		if err != nil {
+			log.Warn().Err(err).Msg("Invalid relay pubkey in config")
+		} else {
+			relay.Info.PubKey = &pubkey
+		}
+	}
 	relay.Info.Contact = cfg.RelayContact
 	relay.Info.SupportedNIPs = []any{1, 2, 4, 9, 11, 12, 15, 16, 17, 20, 22, 33, 40, 42, 45, 59, 77}
 	relay.Info.Software = "https://github.com/nogringo/nostr-relay"
 	relay.Info.Version = "0.2.0"
 
-	// Setup all handlers
+	// Connection lifecycle logging (set before handlers so they can chain)
+	relay.OnConnect = func(ctx context.Context) {
+		ip := khatru.GetIP(ctx)
+		log.Debug().Str("ip", ip).Msg("Client connected")
+	}
+
+	relay.OnDisconnect = func(ctx context.Context) {
+		ip := khatru.GetIP(ctx)
+		log.Debug().Str("ip", ip).Msg("Client disconnected")
+	}
+
+	// Setup all handlers (they will chain with the above)
 	handlers.SetupEventHandlers(relay, store)
 	handlers.SetupQueryHandlers(relay, store)
 	handlers.SetupAuthHandlers(relay, cfg)
-
-	// Connection lifecycle logging
-	relay.OnConnect = append(relay.OnConnect, func(ctx context.Context) {
-		ip := khatru.GetIP(ctx)
-		log.Debug().Str("ip", ip).Msg("Client connected")
-	})
-
-	relay.OnDisconnect = append(relay.OnDisconnect, func(ctx context.Context) {
-		ip := khatru.GetIP(ctx)
-		log.Debug().Str("ip", ip).Msg("Client disconnected")
-	})
 
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)

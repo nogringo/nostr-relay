@@ -6,8 +6,8 @@ import (
 
 	"nostr-relay/config"
 
-	"github.com/fiatjaf/khatru"
-	"github.com/nbd-wtf/go-nostr"
+	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/khatru"
 	"github.com/rs/zerolog/log"
 )
 
@@ -15,33 +15,57 @@ import (
 // Kind 22242 is used for client authentication
 
 func SetupAuthHandlers(relay *khatru.Relay, cfg *config.Config) {
+	// Store existing handlers to chain them
+	existingOnConnect := relay.OnConnect
+	existingOnRequest := relay.OnRequest
+	existingOnEvent := relay.OnEvent
+	existingPreventBroadcast := relay.PreventBroadcast
+	existingOnEventSaved := relay.OnEventSaved
+
 	// NIP-42: Send AUTH challenge on connection so clients can authenticate when they want
-	relay.OnConnect = append(relay.OnConnect, func(ctx context.Context) {
+	relay.OnConnect = func(ctx context.Context) {
+		if existingOnConnect != nil {
+			existingOnConnect(ctx)
+		}
 		khatru.RequestAuth(ctx)
-	})
+	}
 
 	// NIP-59: ALWAYS protect gift wraps - only recipient can query them
 	// This is independent of RequireAuth setting
-	relay.RejectFilter = append(relay.RejectFilter, func(ctx context.Context, filter nostr.Filter) (bool, string) {
+	relay.OnRequest = func(ctx context.Context, filter nostr.Filter) (bool, string) {
+		// Chain existing handler first
+		if existingOnRequest != nil {
+			if reject, msg := existingOnRequest(ctx, filter); reject {
+				return reject, msg
+			}
+		}
+
 		for _, kind := range filter.Kinds {
 			// Kind 1059 (Gift Wrap) and Kind 13 (Seal) require auth
 			if kind == 1059 || kind == 13 || kind == 14 {
-				authedPubkey := khatru.GetAuthed(ctx)
-				if authedPubkey == "" {
+				_, authed := khatru.GetAuthed(ctx)
+				if !authed {
 					khatru.RequestAuth(ctx)
 					return true, "auth-required: authentication required to query private messages"
 				}
-				// User is authenticated - QueryEvents will filter to only return their gift wraps
+				// User is authenticated - QueryStored will filter to only return their gift wraps
 				return false, ""
 			}
 		}
 		return false, ""
-	})
+	}
 
 	// Require authentication for ALL operations if configured
 	if cfg.RequireAuth {
 		// Reject events from unauthenticated users
-		relay.RejectEvent = append(relay.RejectEvent, func(ctx context.Context, event *nostr.Event) (bool, string) {
+		relay.OnEvent = func(ctx context.Context, event nostr.Event) (bool, string) {
+			// Chain existing handler first
+			if existingOnEvent != nil {
+				if reject, msg := existingOnEvent(ctx, event); reject {
+					return reject, msg
+				}
+			}
+
 			// Allow ephemeral events without auth
 			if event.Kind >= 20000 && event.Kind < 30000 {
 				return false, ""
@@ -53,8 +77,8 @@ func SetupAuthHandlers(relay *khatru.Relay, cfg *config.Config) {
 			}
 
 			// Check if user is authenticated
-			authedPubkey := khatru.GetAuthed(ctx)
-			if authedPubkey == "" {
+			authedPubkey, authed := khatru.GetAuthed(ctx)
+			if !authed {
 				khatru.RequestAuth(ctx)
 				return true, "auth-required: authentication required to publish events"
 			}
@@ -65,52 +89,68 @@ func SetupAuthHandlers(relay *khatru.Relay, cfg *config.Config) {
 			}
 
 			return false, ""
-		})
+		}
 	}
 
 	// NIP-59: Prevent broadcasting gift wraps to non-recipients (real-time events)
-	relay.PreventBroadcast = append(relay.PreventBroadcast, func(ws *khatru.WebSocket, event *nostr.Event) bool {
+	relay.PreventBroadcast = func(ws *khatru.WebSocket, filter nostr.Filter, event nostr.Event) bool {
+		// Chain existing handler first
+		if existingPreventBroadcast != nil {
+			if existingPreventBroadcast(ws, filter, event) {
+				return true
+			}
+		}
+
 		// Only filter gift wraps
 		if event.Kind != 1059 {
 			return false
 		}
 
 		// Must be authenticated
-		if ws.AuthedPublicKey == "" {
+		if len(ws.AuthedPublicKeys) == 0 {
 			log.Debug().
-				Str("event_id", event.ID[:16]).
+				Str("event_id", event.ID.Hex()[:16]).
 				Msg("Prevented gift wrap broadcast - user not authenticated")
 			return true
 		}
 
 		// User must be the recipient (p tag)
 		for _, tag := range event.Tags {
-			if len(tag) >= 2 && tag[0] == "p" && tag[1] == ws.AuthedPublicKey {
-				return false // Allow broadcast - user is recipient
+			if len(tag) >= 2 && tag[0] == "p" {
+				for _, authedPK := range ws.AuthedPublicKeys {
+					if tag[1] == authedPK.Hex() {
+						return false // Allow broadcast - user is recipient
+					}
+				}
 			}
 		}
 
 		log.Debug().
-			Str("event_id", event.ID[:16]).
-			Str("authed_pubkey", ws.AuthedPublicKey[:16]).
+			Str("event_id", event.ID.Hex()[:16]).
+			Str("authed_pubkey", ws.AuthedPublicKeys[0].Hex()[:16]).
 			Msg("Prevented gift wrap broadcast - user is not recipient")
 		return true // Prevent broadcast
-	})
+	}
 
 	// Log authentication events
-	relay.OnEventSaved = append(relay.OnEventSaved, func(ctx context.Context, event *nostr.Event) {
+	relay.OnEventSaved = func(ctx context.Context, event nostr.Event) {
+		// Chain existing handler first
+		if existingOnEventSaved != nil {
+			existingOnEventSaved(ctx, event)
+		}
+
 		if event.Kind == 22242 {
 			log.Debug().
-				Str("pubkey", event.PubKey[:16]).
+				Str("pubkey", event.PubKey.Hex()[:16]).
 				Msg("AUTH event processed")
 		}
-	})
+	}
 
 	log.Info().Bool("require_auth", cfg.RequireAuth).Msg("NIP-42 AUTH support enabled")
 }
 
 // ValidateAuthEvent validates a NIP-42 authentication event
-func ValidateAuthEvent(event *nostr.Event, expectedChallenge string, relayURL string) bool {
+func ValidateAuthEvent(event nostr.Event, expectedChallenge string, relayURL string) bool {
 	// Must be kind 22242
 	if event.Kind != 22242 {
 		return false

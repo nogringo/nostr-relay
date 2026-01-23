@@ -2,21 +2,28 @@ package handlers
 
 import (
 	"context"
+	"iter"
 
 	"nostr-relay/internal/storage"
 
-	"github.com/fiatjaf/khatru"
-	"github.com/nbd-wtf/go-nostr"
+	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/khatru"
 	"github.com/rs/zerolog/log"
 )
 
 func SetupQueryHandlers(relay *khatru.Relay, store *storage.BadgerStore) {
-	// Query events
-	relay.QueryEvents = append(relay.QueryEvents, func(ctx context.Context, filter nostr.Filter) (chan *nostr.Event, error) {
-		ch := make(chan *nostr.Event)
+	// Store existing handlers to chain them
+	existingOnRequest := relay.OnRequest
 
-		go func() {
-			defer close(ch)
+	// Query events - returns an iterator
+	relay.QueryStored = func(ctx context.Context, filter nostr.Filter) iter.Seq[nostr.Event] {
+		return func(yield func(nostr.Event) bool) {
+			// Apply default and max limits
+			if filter.Limit == 0 {
+				filter.Limit = 500
+			} else if filter.Limit > 5000 {
+				filter.Limit = 5000
+			}
 
 			events, err := store.QueryEvents(ctx, filter)
 			if err != nil {
@@ -25,18 +32,19 @@ func SetupQueryHandlers(relay *khatru.Relay, store *storage.BadgerStore) {
 			}
 
 			// Get authenticated pubkey for filtering private events
-			authedPubkey := khatru.GetAuthed(ctx)
+			authedPubkey, authed := khatru.GetAuthed(ctx)
 
 			// Filter events before sending
 			filteredCount := 0
+			sentCount := 0
 			for _, event := range events {
 				// NIP-59: Filter private message kinds (gift wrap, seal, DM)
 				if event.Kind == 1059 || event.Kind == 13 || event.Kind == 14 {
 					// Must be authenticated
-					if authedPubkey == "" {
+					if !authed {
 						log.Debug().
-							Int("kind", event.Kind).
-							Str("event_id", event.ID[:16]).
+							Uint16("kind", uint16(event.Kind)).
+							Str("event_id", event.ID.Hex()[:16]).
 							Msg("Filtered private event - user not authenticated")
 						filteredCount++
 						continue
@@ -46,15 +54,15 @@ func SetupQueryHandlers(relay *khatru.Relay, store *storage.BadgerStore) {
 					if event.Kind == 1059 {
 						isRecipient := false
 						for _, tag := range event.Tags {
-							if len(tag) >= 2 && tag[0] == "p" && tag[1] == authedPubkey {
+							if len(tag) >= 2 && tag[0] == "p" && tag[1] == authedPubkey.Hex() {
 								isRecipient = true
 								break
 							}
 						}
 						if !isRecipient {
 							log.Debug().
-								Int("kind", event.Kind).
-								Str("event_id", event.ID[:16]).
+								Uint16("kind", uint16(event.Kind)).
+								Str("event_id", event.ID.Hex()[:16]).
 								Msg("Filtered gift wrap - user is not recipient")
 							filteredCount++
 							continue
@@ -62,38 +70,38 @@ func SetupQueryHandlers(relay *khatru.Relay, store *storage.BadgerStore) {
 					}
 				}
 
-				select {
-				case ch <- event:
-				case <-ctx.Done():
-					return
+				// Convert pointer to value and yield
+				if !yield(*event) {
+					break
 				}
+				sentCount++
 			}
 
 			log.Debug().
 				Int("total", len(events)).
 				Int("filtered", filteredCount).
-				Int("sent", len(events)-filteredCount).
+				Int("sent", sentCount).
 				Msg("Query returned events")
-		}()
-
-		return ch, nil
-	})
-
-	// Apply default and max limits
-	relay.OverwriteFilter = append(relay.OverwriteFilter, func(ctx context.Context, filter *nostr.Filter) {
-		if filter.Limit == 0 {
-			filter.Limit = 500
-		} else if filter.Limit > 5000 {
-			filter.Limit = 5000
 		}
-	})
+	}
+
+	// Apply filter restrictions in OnRequest
+	relay.OnRequest = func(ctx context.Context, filter nostr.Filter) (bool, string) {
+		// Chain existing handler first
+		if existingOnRequest != nil {
+			if reject, msg := existingOnRequest(ctx, filter); reject {
+				return reject, msg
+			}
+		}
+		return false, ""
+	}
 
 	// Count events
-	relay.CountEvents = append(relay.CountEvents, func(ctx context.Context, filter nostr.Filter) (int64, error) {
+	relay.Count = func(ctx context.Context, filter nostr.Filter) (uint32, error) {
 		events, err := store.QueryEvents(ctx, filter)
 		if err != nil {
 			return 0, err
 		}
-		return int64(len(events)), nil
-	})
+		return uint32(len(events)), nil
+	}
 }
