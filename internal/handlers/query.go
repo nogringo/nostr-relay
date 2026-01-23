@@ -39,7 +39,8 @@ func SetupQueryHandlers(relay *khatru.Relay, store *storage.BadgerStore) {
 			sentCount := 0
 			for _, event := range events {
 				// NIP-59: Filter private message kinds (gift wrap, seal, DM)
-				if event.Kind == 1059 || event.Kind == 13 || event.Kind == 14 {
+				// Skip filtering for internal calls (e.g., deletion requests)
+				if !khatru.IsInternalCall(ctx) && (event.Kind == 1059 || event.Kind == 13 || event.Kind == 14) {
 					// Must be authenticated
 					if !authed {
 						log.Debug().
