@@ -1,55 +1,72 @@
 # nostr-relay
 
-A high-performance Nostr relay with full support for private messaging (NIP-17/59) and efficient sync (NIP-77).
+> The only Nostr relay where you can delete the gift wraps sent to you.
+> Strict NIP-59 access control, NIP-77 sync, general-purpose.
 
-## Features
+## Why this relay
 
-- **NIP-59 Gift Wrap** - Full support with recipient-only access and deletion
-- **NIP-77 Negentropy** - Efficient event synchronization
-- **NIP-17 Private DMs** - Encrypted direct messages
-- **NIP-42 AUTH** - Protected access to private content
-- **NIP-09 Deletion** - Event deletion with gift wrap recipient support
+Most Nostr relays don't bother with three things that matter for private
+messaging. This one does.
+
+### 1. Your gift wraps stay private
+
+NIP-59 says relays *SHOULD* only serve `kind 1059` events to the marked
+recipient. Most relays leak: they hand out gift wraps to anyone who asks.
+
+This relay enforces it via NIP-42 AUTH:
+
+- Querying `kind 1059` requires authentication.
+- Even authenticated, you only get the gift wraps where you are the `p` tag.
+- Non-recipients get silently filtered — no metadata leak.
+
+### 2. You can delete the gift wraps you received
+
+NIP-59 says:
+
+> *"relays SHOULD delete kind 1059 events whose p-tag matches the signer of
+> NIP-09 deletions or NIP-62 vanish requests."*
+
+The catch: gift wraps are signed by random ephemeral keys, so the standard
+NIP-09 rule ("only the author can delete") means **nobody** can delete their
+own inbox. This relay implements the SHOULD correctly: if you are the
+recipient (`p` tag), your NIP-09 deletion request succeeds.
+
+No other public relay implements this. If you find one,
+open an issue — we'll
+update this claim.
+
+### 3. Efficient sync via NIP-77 Negentropy
+
+Resync an inbox from scratch in seconds, not minutes. NIP-77 is built in
+and on by default.
 
 ## Supported NIPs
 
+General-purpose: this is not a single-purpose inbox relay. It speaks the
+full protocol.
+
 | NIP | Description | Status |
 |-----|-------------|--------|
-| 01 | Basic Protocol | ✅ |
-| 02 | Follow List | ✅ |
-| 04 | Encrypted DM (legacy) | ✅ |
-| 09 | Event Deletion | ✅ |
-| 11 | Relay Information | ✅ |
-| 12 | Generic Tag Queries | ✅ |
-| 16 | Event Treatment | ✅ |
-| 17 | Private Direct Messages | ✅ |
-| 20 | Command Results | ✅ |
-| 22 | Event `created_at` | ✅ |
-| 33 | Parameterized Replaceable | ✅ |
-| 40 | Expiration | ✅ |
-| 42 | Authentication | ✅ |
-| 45 | Event Counts | ✅ |
-| 59 | Gift Wrap | ✅ |
-| 77 | Negentropy | ✅ |
-
-## Quick Start
-
-```bash
-# Clone
-git clone https://github.com/nogringo/nostr-relay
-cd nostr-relay
-
-# Run
-go run ./cmd/relay
-
-# Or build and run
-make run
-```
-
-The relay listens on `ws://localhost:3334`
+| 01 | Basic Protocol | OK |
+| 02 | Follow List | OK |
+| 04 | Encrypted DM (legacy) | OK |
+| 09 | Event Deletion (with gift wrap recipient support) | OK |
+| 11 | Relay Information | OK |
+| 12 | Generic Tag Queries | OK |
+| 16 | Event Treatment | OK |
+| 17 | Private Direct Messages | OK |
+| 20 | Command Results | OK |
+| 22 | Event `created_at` | OK |
+| 33 | Parameterized Replaceable | OK |
+| 40 | Expiration | OK |
+| 42 | Authentication | OK |
+| 45 | Event Counts | OK |
+| 59 | Gift Wrap (recipient-only access + deletion) | OK |
+| 77 | Negentropy | OK |
 
 ## Configuration
 
-Configure via environment variables:
+All configuration is via environment variables:
 
 ```bash
 # Server
@@ -57,14 +74,14 @@ RELAY_PORT=3334
 RELAY_HOST=0.0.0.0
 RELAY_DATA_PATH=./data
 
-# Relay Info (NIP-11)
+# Relay info (NIP-11)
 RELAY_NAME="nostr-relay"
 RELAY_DESCRIPTION="Privacy-focused Nostr relay"
 RELAY_PUBKEY=<your_pubkey>
 RELAY_CONTACT=<your_contact>
 
 # Authentication
-RELAY_REQUIRE_AUTH=false  # Set to true to require auth for all operations
+RELAY_REQUIRE_AUTH=false  # true → require auth for all operations
 
 # Limits
 RELAY_MAX_EVENT_SIZE=65536
@@ -73,72 +90,10 @@ RELAY_MAX_FILTERS=10
 RELAY_RATE_LIMIT=100
 ```
 
-## Docker
+## Deploy with Docker Compose
 
 ```bash
-# Build
-docker build -t nostr-relay .
-
-# Run
-docker run -p 3334:3334 -v ./data:/app/data nostr-relay
+curl -O https://raw.githubusercontent.com/nogringo/nostr-relay/main/docker-compose.ghrc.yml
+docker compose -f docker-compose.ghrc.yml up -d
 ```
 
-## Security
-
-### Gift Wrap Protection (NIP-59)
-
-Gift wraps are **always** protected, regardless of `RELAY_REQUIRE_AUTH`:
-
-- Querying kind 1059 requires AUTH
-- Users can only query gift wraps addressed to them (`#p` filter)
-- Recipients can delete their received gift wraps
-
-```
-REQ ["kinds": [1059]]                    -> auth-required
-REQ ["kinds": [1059], "#p": ["<pubkey>"]] -> OK (if authenticated as pubkey)
-```
-
-### Deletion Rules (NIP-09)
-
-| Event Type | Who Can Delete |
-|------------|---------------|
-| Regular events | Author only |
-| Gift wraps (1059) | Recipient (tag p) |
-
-## Architecture
-
-```
-nostr-relay/
-├── cmd/relay/main.go           # Entry point
-├── config/config.go            # Configuration
-├── internal/
-│   ├── handlers/
-│   │   ├── auth.go             # NIP-42 AUTH
-│   │   ├── events.go           # Event validation (NIP-09/17/59)
-│   │   └── query.go            # Query handlers
-│   └── storage/
-│       └── badger.go           # BadgerDB storage
-├── Dockerfile
-├── Makefile
-└── .env.example
-```
-
-## Development
-
-```bash
-# Build
-make build
-
-# Run in dev mode
-make dev
-
-# Run tests
-make test
-
-# Clean
-make clean
-```
-
-## Credits
-
-Built with [khatru](https://github.com/fiatjaf/khatru) framework.
