@@ -117,6 +117,92 @@ func (s *BadgerStore) SaveEvent(ctx context.Context, event *nostr.Event) error {
 	})
 }
 
+// ReplaceEvent applies NIP-01 replaceable/addressable semantics: only the newest
+// event for a given (pubkey, kind) — or (pubkey, kind, d-tag) for addressable —
+// is kept. Older versions are deleted; if the incoming event is older than the
+// stored one, it is dropped.
+func (s *BadgerStore) ReplaceEvent(ctx context.Context, event *nostr.Event) error {
+	dTag := ""
+	if event.Kind.IsAddressable() {
+		for _, tag := range event.Tags {
+			if len(tag) >= 2 && tag[0] == "d" {
+				dTag = tag[1]
+				break
+			}
+		}
+	}
+
+	pubkeyHex := event.PubKey.Hex()
+	prefix := prefixByPubkey + pubkeyHex + ":"
+
+	var toDelete []*nostr.Event
+	skip := false
+	newID := event.ID.Hex()
+	newTs := event.CreatedAt.Time().Unix()
+
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix = []byte(prefix)
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			var eventID string
+			if err := it.Item().Value(func(val []byte) error {
+				eventID = string(val)
+				return nil
+			}); err != nil {
+				continue
+			}
+
+			existing, err := s.getEventByID(txn, eventID)
+			if err != nil || existing == nil || existing.Kind != event.Kind {
+				continue
+			}
+
+			if event.Kind.IsAddressable() {
+				existingDTag := ""
+				for _, tag := range existing.Tags {
+					if len(tag) >= 2 && tag[0] == "d" {
+						existingDTag = tag[1]
+						break
+					}
+				}
+				if existingDTag != dTag {
+					continue
+				}
+			}
+
+			existingTs := existing.CreatedAt.Time().Unix()
+			existingID := existing.ID.Hex()
+			if existingID == newID {
+				skip = true
+				return nil
+			}
+			// NIP-01: newer wins; ties broken by lower id
+			if existingTs > newTs || (existingTs == newTs && existingID < newID) {
+				skip = true
+				return nil
+			}
+			toDelete = append(toDelete, existing)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if skip {
+		return nil
+	}
+
+	for _, old := range toDelete {
+		if err := s.DeleteEvent(ctx, old); err != nil {
+			return err
+		}
+	}
+	return s.SaveEvent(ctx, event)
+}
+
 func (s *BadgerStore) DeleteEvent(ctx context.Context, event *nostr.Event) error {
 	eventID := event.ID.Hex()
 	pubkeyHex := event.PubKey.Hex()
