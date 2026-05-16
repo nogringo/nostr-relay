@@ -27,7 +27,7 @@ func SetupEventHandlers(relay *khatru.Relay, store *storage.BadgerStore) {
 	existingOnEventSaved := relay.OnEventSaved
 	existingOnEphemeralEvent := relay.OnEphemeralEvent
 
-	// Store events
+	// Store regular events (khatru routes non-regular kinds to ReplaceEvent)
 	relay.StoreEvent = func(ctx context.Context, event nostr.Event) error {
 		log.Debug().
 			Str("id", event.ID.Hex()[:16]).
@@ -36,6 +36,18 @@ func SetupEventHandlers(relay *khatru.Relay, store *storage.BadgerStore) {
 			Msg("Storing event")
 
 		return store.SaveEvent(ctx, &event)
+	}
+
+	// Replace replaceable (kinds 0, 3, 10000-19999) and addressable (30000-39999) events.
+	// Without this, khatru silently drops non-regular events.
+	relay.ReplaceEvent = func(ctx context.Context, event nostr.Event) error {
+		log.Debug().
+			Str("id", event.ID.Hex()[:16]).
+			Uint16("kind", uint16(event.Kind)).
+			Str("pubkey", event.PubKey.Hex()[:16]).
+			Msg("Replacing event")
+
+		return store.ReplaceEvent(ctx, &event)
 	}
 
 	// Delete events (for NIP-09 event deletion)
