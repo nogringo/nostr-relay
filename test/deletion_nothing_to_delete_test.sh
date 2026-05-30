@@ -60,7 +60,7 @@ OUTPUT=$(nak event -k 5 \
 echo "${OUTPUT}"
 
 if echo "${OUTPUT}" | grep -q "failed.*nothing to delete"; then
-    fail "relay rejected kind 5 with 'nothing to delete' — it should accept the deletion request"
+    fail "relay rejected kind 5 with 'nothing to delete' - it should accept the deletion request"
 fi
 
 if ! echo "${OUTPUT}" | grep -q "success"; then
