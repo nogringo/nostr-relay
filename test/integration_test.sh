@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Integration test: publish an addressable event (kind 30817 — the kind used
+# Integration test: publish an addressable event (kind 30817 - the kind used
 # for NIP drafts) to the relay, then query it back. Reproduces the bug where
 # non-regular events were silently dropped.
 #
@@ -62,7 +62,7 @@ echo "==> Querying it back"
 RESULT=$(nak req -k 30817 -a "${PK}" "${URL}" 2>/dev/null | head -1)
 
 if [ -z "${RESULT}" ]; then
-    fail "no event returned — addressable event was silently dropped by the relay"
+    fail "no event returned - addressable event was silently dropped by the relay"
 fi
 
 KIND=$(echo "${RESULT}" | jq -r .kind)

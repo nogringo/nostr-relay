@@ -17,7 +17,7 @@ This relay enforces it via NIP-42 AUTH:
 
 - Querying `kind 1059` requires authentication.
 - Even authenticated, you only get the gift wraps where you are the `p` tag.
-- Non-recipients get silently filtered — no metadata leak.
+- Non-recipients get silently filtered - no metadata leak.
 
 ### 2. You can delete the gift wraps you received
 
@@ -32,7 +32,7 @@ own inbox. This relay implements the SHOULD correctly: if you are the
 recipient (`p` tag), your NIP-09 deletion request succeeds.
 
 No other public relay implements this. If you find one,
-open an issue — we'll
+open an issue - we'll
 update this claim.
 
 ### 3. Efficient sync via NIP-77 Negentropy

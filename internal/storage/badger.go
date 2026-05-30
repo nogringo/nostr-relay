@@ -118,7 +118,7 @@ func (s *BadgerStore) SaveEvent(ctx context.Context, event *nostr.Event) error {
 }
 
 // ReplaceEvent applies NIP-01 replaceable/addressable semantics: only the newest
-// event for a given (pubkey, kind) — or (pubkey, kind, d-tag) for addressable —
+// event for a given (pubkey, kind) - or (pubkey, kind, d-tag) for addressable -
 // is kept. Older versions are deleted; if the incoming event is older than the
 // stored one, it is dropped.
 func (s *BadgerStore) ReplaceEvent(ctx context.Context, event *nostr.Event) error {
