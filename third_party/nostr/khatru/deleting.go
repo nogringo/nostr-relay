@@ -23,7 +23,6 @@ func (rl *Relay) handleDeleteRequest(ctx context.Context, evt nostr.Event) error
 		return ErrNothingToDelete
 	}
 
-	haveDeletedSomething := false
 	for _, tag := range evt.Tags {
 		if len(tag) >= 2 {
 			var f nostr.Filter
@@ -93,7 +92,6 @@ func (rl *Relay) handleDeleteRequest(ctx context.Context, evt nostr.Event) error
 							rl.expirationManager.removeEvent(target.ID)
 						}
 
-						haveDeletedSomething = true
 						return nil
 					})
 				} else {
@@ -111,9 +109,8 @@ func (rl *Relay) handleDeleteRequest(ctx context.Context, evt nostr.Event) error
 		}
 	}
 
-	if haveDeletedSomething {
-		return nil
-	}
-
-	return ErrNothingToDelete
+	// Always return nil: the deletion request event (kind 5) has already been
+	// stored by handleNormal. If we don't have the target events, that's not
+	// a failure - the request was still accepted and persisted.
+	return nil
 }
