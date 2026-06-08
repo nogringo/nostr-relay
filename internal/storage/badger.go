@@ -10,6 +10,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/eventstore"
 )
 
 type BadgerStore struct {
@@ -75,7 +76,10 @@ func (s *BadgerStore) SaveEvent(ctx context.Context, event *nostr.Event) error {
 		eventKey := []byte(prefixEvent + eventID)
 		_, err := txn.Get(eventKey)
 		if err == nil {
-			return nil // Event already exists
+			return eventstore.ErrDupEvent
+		}
+		if err != badger.ErrKeyNotFound {
+			return err
 		}
 
 		// Store the event
@@ -307,6 +311,22 @@ func (s *BadgerStore) QueryEvents(ctx context.Context, filter nostr.Filter) ([]*
 			}
 			return nil
 
+		case len(filter.Tags) > 0:
+			// Query by tag. This is especially important for gift-wrap inbox
+			// queries, where #p is far more selective than kind 1059.
+			for tagName, values := range filter.Tags {
+				for _, value := range values {
+					prefix = fmt.Sprintf("%s%s:%s:", prefixByTag, tagName, value)
+					if err := s.scanIndex(txn, prefix, filter, &events, limit); err != nil {
+						return err
+					}
+					if len(events) >= limit {
+						return nil
+					}
+				}
+			}
+			return nil
+
 		case len(filter.Authors) > 0:
 			// Query by author pubkey
 			for _, author := range filter.Authors {
@@ -329,21 +349,6 @@ func (s *BadgerStore) QueryEvents(ctx context.Context, filter nostr.Filter) ([]*
 				}
 				if len(events) >= limit {
 					return nil
-				}
-			}
-			return nil
-
-		case len(filter.Tags) > 0:
-			// Query by tag
-			for tagName, values := range filter.Tags {
-				for _, value := range values {
-					prefix = fmt.Sprintf("%s%s:%s:", prefixByTag, tagName, value)
-					if err := s.scanIndex(txn, prefix, filter, &events, limit); err != nil {
-						return err
-					}
-					if len(events) >= limit {
-						return nil
-					}
 				}
 			}
 			return nil

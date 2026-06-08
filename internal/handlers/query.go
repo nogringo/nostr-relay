@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"iter"
+	"slices"
 
 	"nostr-relay/internal/storage"
 
@@ -23,6 +24,12 @@ func SetupQueryHandlers(relay *khatru.Relay, store *storage.BadgerStore) {
 				filter.Limit = 500
 			} else if filter.Limit > 5000 {
 				filter.Limit = 5000
+			}
+
+			var ok bool
+			filter, ok = restrictGiftWrapFilter(ctx, filter)
+			if !ok {
+				return
 			}
 
 			events, err := store.QueryEvents(ctx, filter)
@@ -99,10 +106,41 @@ func SetupQueryHandlers(relay *khatru.Relay, store *storage.BadgerStore) {
 
 	// Count events
 	relay.Count = func(ctx context.Context, filter nostr.Filter) (uint32, error) {
+		var ok bool
+		filter, ok = restrictGiftWrapFilter(ctx, filter)
+		if !ok {
+			return 0, nil
+		}
+
 		events, err := store.QueryEvents(ctx, filter)
 		if err != nil {
 			return 0, err
 		}
 		return uint32(len(events)), nil
 	}
+}
+
+func restrictGiftWrapFilter(ctx context.Context, filter nostr.Filter) (nostr.Filter, bool) {
+	if khatru.IsInternalCall(ctx) || len(filter.Kinds) != 1 || filter.Kinds[0] != KindGiftWrap {
+		return filter, true
+	}
+
+	authedPubkey, authed := khatru.GetAuthed(ctx)
+	if !authed {
+		return filter, false
+	}
+
+	pubkeyHex := authedPubkey.Hex()
+	restricted := filter.Clone()
+	if restricted.Tags == nil {
+		restricted.Tags = nostr.TagMap{}
+	}
+
+	pTags := restricted.Tags["p"]
+	if len(pTags) > 0 && !slices.Contains(pTags, pubkeyHex) {
+		return restricted, false
+	}
+	restricted.Tags["p"] = []string{pubkeyHex}
+
+	return restricted, true
 }

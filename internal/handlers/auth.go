@@ -18,6 +18,7 @@ func SetupAuthHandlers(relay *khatru.Relay, cfg *config.Config) {
 	// Store existing handlers to chain them
 	existingOnConnect := relay.OnConnect
 	existingOnRequest := relay.OnRequest
+	existingOnCount := relay.OnCount
 	existingOnEvent := relay.OnEvent
 	existingPreventBroadcast := relay.PreventBroadcast
 	existingOnEventSaved := relay.OnEventSaved
@@ -40,19 +41,18 @@ func SetupAuthHandlers(relay *khatru.Relay, cfg *config.Config) {
 			}
 		}
 
-		for _, kind := range filter.Kinds {
-			// Kind 1059 (Gift Wrap) and Kind 13 (Seal) require auth
-			if kind == 1059 || kind == 13 || kind == 14 {
-				_, authed := khatru.GetAuthed(ctx)
-				if !authed {
-					khatru.RequestAuth(ctx)
-					return true, "auth-required: authentication required to query private messages"
-				}
-				// User is authenticated - QueryStored will filter to only return their gift wraps
-				return false, ""
+		return requireAuthForPrivateMessageFilter(ctx, filter)
+	}
+
+	relay.OnCount = func(ctx context.Context, filter nostr.Filter) (bool, string) {
+		// Chain existing handler first
+		if existingOnCount != nil {
+			if reject, msg := existingOnCount(ctx, filter); reject {
+				return reject, msg
 			}
 		}
-		return false, ""
+
+		return requireAuthForPrivateMessageFilter(ctx, filter)
 	}
 
 	// Require authentication for ALL operations if configured
@@ -102,15 +102,12 @@ func SetupAuthHandlers(relay *khatru.Relay, cfg *config.Config) {
 		}
 
 		// Only filter gift wraps
-		if event.Kind != 1059 {
+		if event.Kind != KindGiftWrap {
 			return false
 		}
 
 		// Must be authenticated
 		if len(ws.AuthedPublicKeys) == 0 {
-			log.Debug().
-				Str("event_id", event.ID.Hex()[:16]).
-				Msg("Prevented gift wrap broadcast - user not authenticated")
 			return true
 		}
 
@@ -125,10 +122,6 @@ func SetupAuthHandlers(relay *khatru.Relay, cfg *config.Config) {
 			}
 		}
 
-		log.Debug().
-			Str("event_id", event.ID.Hex()[:16]).
-			Str("authed_pubkey", ws.AuthedPublicKeys[0].Hex()[:16]).
-			Msg("Prevented gift wrap broadcast - user is not recipient")
 		return true // Prevent broadcast
 	}
 
@@ -147,6 +140,21 @@ func SetupAuthHandlers(relay *khatru.Relay, cfg *config.Config) {
 	}
 
 	log.Info().Bool("require_auth", cfg.RequireAuth).Msg("NIP-42 AUTH support enabled")
+}
+
+func requireAuthForPrivateMessageFilter(ctx context.Context, filter nostr.Filter) (bool, string) {
+	for _, kind := range filter.Kinds {
+		// Kind 1059 (Gift Wrap), Kind 13 (Seal), and Kind 14 (DM) require auth.
+		if kind == KindGiftWrap || kind == KindSeal || kind == KindDirectMessage {
+			_, authed := khatru.GetAuthed(ctx)
+			if !authed {
+				khatru.RequestAuth(ctx)
+				return true, "auth-required: authentication required to query private messages"
+			}
+			return false, ""
+		}
+	}
+	return false, ""
 }
 
 // ValidateAuthEvent validates a NIP-42 authentication event
