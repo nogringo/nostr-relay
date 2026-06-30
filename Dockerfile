@@ -1,35 +1,22 @@
-FROM golang:1.25-alpine AS builder
+# syntax=docker/dockerfile:1
 
-WORKDIR /app
-
-RUN apk add --no-cache git
-
+FROM golang:1.26-alpine AS build
+RUN apk add --no-cache build-base
+WORKDIR /src
 COPY go.mod go.sum ./
-COPY third_party/ ./third_party/
 RUN go mod download
-
 COPY . .
+# LMDB needs cgo; link statically so the binary runs on a bare base image.
+RUN CGO_ENABLED=1 go build -trimpath \
+    -ldflags='-s -w -extldflags "-static"' \
+    -o /out/nostr-relay .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o nostr-relay ./cmd/relay
-
-FROM alpine:3.20
-
-LABEL org.opencontainers.image.source="https://github.com/nogringo/nostr-relay"
-LABEL org.opencontainers.image.description="Privacy-focused Nostr relay with NIP-17/42/59/77"
-LABEL org.opencontainers.image.licenses="MIT"
-
-WORKDIR /app
-
-COPY --from=builder /app/nostr-relay .
-
-RUN mkdir -p /app/data && \
-    adduser -D -H nostr && \
-    chown -R nostr:nostr /app
-
-USER nostr
-
+FROM alpine:3.21
+RUN adduser -D -H relay
+COPY --from=build /out/nostr-relay /usr/local/bin/nostr-relay
+WORKDIR /data
+RUN chown relay /data
+USER relay
+ENV LISTEN_ADDR=0.0.0.0:3334
 EXPOSE 3334
-
-VOLUME ["/app/data"]
-
-CMD ["./nostr-relay"]
+ENTRYPOINT ["nostr-relay"]

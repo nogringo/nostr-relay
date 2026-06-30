@@ -63,37 +63,3 @@ full protocol.
 | 45 | Event Counts | OK |
 | 59 | Gift Wrap (recipient-only access + deletion) | OK |
 | 77 | Negentropy | OK |
-
-## Configuration
-
-All configuration is via environment variables:
-
-```bash
-# Server
-RELAY_PORT=3334
-RELAY_HOST=0.0.0.0
-RELAY_DATA_PATH=./data
-
-# Relay info (NIP-11)
-RELAY_NAME="nostr-relay"
-RELAY_DESCRIPTION="Privacy-focused Nostr relay"
-RELAY_PUBKEY=<your_pubkey>
-RELAY_CONTACT=<your_contact>
-
-# Authentication
-RELAY_REQUIRE_AUTH=false  # true → require auth for all operations
-
-# Limits
-RELAY_MAX_EVENT_SIZE=65536
-RELAY_MAX_SUBSCRIPTIONS=20
-RELAY_MAX_FILTERS=10
-RELAY_RATE_LIMIT=100
-```
-
-## Deploy with Docker Compose
-
-```bash
-curl -O https://raw.githubusercontent.com/nogringo/nostr-relay/main/docker-compose.ghrc.yml
-docker compose -f docker-compose.ghrc.yml up -d
-```
-
