@@ -22,6 +22,7 @@ func main() {
 	relay.Negentropy = true
 	applyRelayInfo(relay)
 	restrictGiftWraps(relay)
+	configureInboundNotificationsFromEnv(relay)
 
 	// NIP-42 host validation trusts the Host the reverse proxy forwards, so the
 	// relay must stay reachable only through that proxy: bind to loopback by
