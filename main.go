@@ -23,6 +23,7 @@ func main() {
 	applyRelayInfo(relay)
 	restrictGiftWraps(relay)
 	configureInboundNotificationsFromEnv(relay)
+	configureAccountDeletionFromEnv(relay)
 
 	// NIP-42 host validation trusts the Host the reverse proxy forwards, so the
 	// relay must stay reachable only through that proxy: bind to loopback by
