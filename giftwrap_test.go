@@ -65,6 +65,57 @@ func has(evts []nostr.Event, id nostr.ID) bool {
 	return false
 }
 
+// OnEvent guards writes: NIP-59 gift wraps are signed by random ephemeral keys,
+// but the client that deposits one still has to authenticate with NIP-42 first.
+func TestGiftWrapOnEventRequiresAuth(t *testing.T) {
+	relay, _ := newTestRelay(t)
+
+	authed := nostr.GetPublicKey(nostr.Generate())
+	senderSK := nostr.Generate()
+	recipient := nostr.GetPublicKey(nostr.Generate())
+
+	giftWrap := sign(t, senderSK, nostr.KindGiftWrap, nostr.Tags{{"p", recipient.Hex()}})
+	note := sign(t, senderSK, 1, nil)
+
+	cases := []struct {
+		name       string
+		ctx        context.Context
+		event      nostr.Event
+		wantReject bool
+	}{
+		{
+			name:       "unauthenticated gift wrap is rejected",
+			ctx:        context.Background(),
+			event:      giftWrap,
+			wantReject: true,
+		},
+		{
+			name:       "authenticated gift wrap is accepted even when auth key differs from ephemeral signer",
+			ctx:        khatru.ForceSetAuthed(context.Background(), authed),
+			event:      giftWrap,
+			wantReject: false,
+		},
+		{
+			name:       "non-gift-wrap event is untouched",
+			ctx:        context.Background(),
+			event:      note,
+			wantReject: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reject, msg := relay.OnEvent(tc.ctx, tc.event)
+			if reject != tc.wantReject {
+				t.Errorf("OnEvent reject = %v, want %v", reject, tc.wantReject)
+			}
+			if tc.wantReject && msg != "auth-required: authenticate to publish gift wraps" {
+				t.Errorf("OnEvent msg = %q", msg)
+			}
+		})
+	}
+}
+
 // QueryStored is the safety net: even a broad filter (no kinds) that the store
 // would happily return must never expose a kind 1059 to anyone but its recipient.
 func TestGiftWrapQueryStored(t *testing.T) {

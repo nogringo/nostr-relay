@@ -9,14 +9,31 @@ import (
 	"fiatjaf.com/nostr/khatru"
 )
 
-// restrictGiftWraps ensures a NIP-59 gift wrap (kind 1059) can only be retrieved
-// by its recipient (the pubkey in the `p` tag), authenticated via NIP-42.
+// restrictGiftWraps ensures a NIP-59 gift wrap (kind 1059) can only be
+// published by an authenticated client, then retrieved by its recipient (the
+// pubkey in the `p` tag), authenticated via NIP-42.
 //
 // A single websocket connection may authenticate as several pubkeys, so every
 // check tests membership against the full set of authenticated keys, never just
 // the last one.
 func restrictGiftWraps(relay *khatru.Relay) {
-	// 1) A request/count that touches gift wraps must be authenticated. If it
+	// 1) Publishing gift wraps must be authenticated. NIP-59 gift wraps are signed
+	//    by ephemeral keys, so the authenticated pubkey intentionally does not
+	//    need to match event.PubKey.
+	prevOnEvent := relay.OnEvent
+	relay.OnEvent = func(ctx context.Context, event nostr.Event) (reject bool, msg string) {
+		if prevOnEvent != nil {
+			if reject, msg := prevOnEvent(ctx, event); reject {
+				return reject, msg
+			}
+		}
+		if event.Kind != nostr.KindGiftWrap || len(khatru.GetAllAuthed(ctx)) > 0 {
+			return false, ""
+		}
+		return true, "auth-required: authenticate to publish gift wraps"
+	}
+
+	// 2) A request/count that touches gift wraps must be authenticated. If it
 	//    names recipients, each must be one of the connection's own identities.
 	gate := func(ctx context.Context, filter nostr.Filter) (reject bool, msg string) {
 		if !slices.Contains(filter.Kinds, nostr.KindGiftWrap) {
@@ -39,7 +56,7 @@ func restrictGiftWraps(relay *khatru.Relay) {
 	relay.OnRequest = gate
 	relay.OnCount = gate
 
-	// 2) Safety net: even via a broad query (no `kinds`, or `{}`), never return a
+	// 3) Safety net: even via a broad query (no `kinds`, or `{}`), never return a
 	//    kind 1059 event to anyone other than one of its authenticated recipients.
 	base := relay.QueryStored
 	relay.QueryStored = func(ctx context.Context, filter nostr.Filter) iter.Seq[nostr.Event] {
@@ -51,7 +68,7 @@ func restrictGiftWraps(relay *khatru.Relay) {
 		return scopeGiftWraps(khatru.GetAllAuthed(ctx), base(ctx, filter))
 	}
 
-	// 3) Live path: a newly published gift wrap is pushed to every subscription
+	// 4) Live path: a newly published gift wrap is pushed to every subscription
 	//    whose filter matches it, bypassing QueryStored. Only deliver it over a
 	//    connection authenticated as the recipient.
 	relay.PreventBroadcast = func(ws *khatru.WebSocket, filter nostr.Filter, event nostr.Event) bool {
@@ -65,7 +82,7 @@ func restrictGiftWraps(relay *khatru.Relay) {
 		return !isAuthedRecipient(ws.AuthedPublicKeys, p[1])
 	}
 
-	// 4) Deletion: a gift wrap is signed by a throw-away ephemeral key, so NIP-09's
+	// 5) Deletion: a gift wrap is signed by a throw-away ephemeral key, so NIP-09's
 	//    default "only the author may delete" rule can never apply. NIP-59 instead
 	//    lets the recipient delete it, proven by the deletion event's own signature:
 	//    its pubkey must match the gift wrap's `p` tag. Every other kind keeps the
