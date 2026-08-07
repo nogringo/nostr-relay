@@ -41,15 +41,21 @@ func restrictGiftWraps(relay *khatru.Relay) {
 		}
 
 		authed := khatru.GetAllAuthed(ctx)
-		if len(authed) == 0 {
-			khatru.RequestAuth(ctx)
-			return true, "auth-required: authenticate to fetch gift wraps"
-		}
 
+		// An unknown recipient is always resolvable by authenticating as them, so
+		// this is "auth-required" and not "restricted", even when the connection
+		// already carries other identities: khatru only sends the NIP-42 challenge
+		// for the "auth-required:" prefix, and clients treat "restricted:" as final.
 		for _, p := range filter.Tags["p"] {
 			if !isAuthedRecipient(authed, p) {
-				return true, "restricted: you can only fetch your own gift wraps"
+				requestAuth(ctx)
+				return true, "auth-required: authenticate as this recipient to fetch their gift wraps"
 			}
+		}
+
+		if len(authed) == 0 {
+			requestAuth(ctx)
+			return true, "auth-required: authenticate to fetch gift wraps"
 		}
 		return false, "" // QueryStored scopes the results to the authed recipient(s)
 	}
@@ -110,6 +116,15 @@ func scopeGiftWraps(authed []nostr.PubKey, src iter.Seq[nostr.Event]) iter.Seq[n
 				return
 			}
 		}
+	}
+}
+
+// requestAuth sends a NIP-42 challenge over the live connection, if there is
+// one. khatru raises the challenge by itself on a rejected REQ, but not on a
+// rejected COUNT, so the gate has to ask for it explicitly.
+func requestAuth(ctx context.Context) {
+	if khatru.GetConnection(ctx) != nil {
+		khatru.RequestAuth(ctx)
 	}
 }
 
