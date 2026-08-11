@@ -19,6 +19,7 @@ func newTestRelay(t *testing.T) (*khatru.Relay, *slicestore.SliceStore) {
 	}
 	relay := khatru.NewRelay()
 	relay.UseEventstore(store, 400)
+	sendAuthChallengeOnConnect(relay)
 	restrictGiftWraps(relay)
 	return relay, store
 }

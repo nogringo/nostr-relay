@@ -21,6 +21,7 @@ func main() {
 	relay.UseEventstore(db, 400)
 	relay.Negentropy = true
 	applyRelayInfo(relay)
+	sendAuthChallengeOnConnect(relay)
 	restrictGiftWraps(relay)
 	configureInboundNotificationsFromEnv(relay)
 	configureAccountDeletionFromEnv(relay)

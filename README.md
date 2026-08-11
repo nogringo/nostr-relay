@@ -18,6 +18,7 @@ This relay enforces it via NIP-42 AUTH:
 - Querying `kind 1059` requires authentication.
 - Even authenticated, you only get the gift wraps where you are the `p` tag.
 - Non-recipients get silently filtered - no metadata leak.
+- The AUTH challenge is sent on connect, so clients can authenticate upfront.
 
 ### 2. You can delete the gift wraps you received
 
