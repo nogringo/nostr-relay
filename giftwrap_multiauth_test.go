@@ -75,6 +75,16 @@ func labels(envs []nostr.Envelope) string {
 	return "[" + strings.Join(out, " ") + "]"
 }
 
+func countLabel(envs []nostr.Envelope, label string) int {
+	n := 0
+	for _, e := range envs {
+		if e.Label() == label {
+			n++
+		}
+	}
+	return n
+}
+
 func challengeIn(envs []nostr.Envelope) string {
 	for _, e := range envs {
 		if auth, ok := e.(*nostr.AuthEnvelope); ok && auth.Challenge != nil {

@@ -295,11 +295,6 @@ func TestIsAuthedRecipient(t *testing.T) {
 
 // OnRequest / OnCount gate explicit gift-wrap queries: the requester must be
 // authenticated and may only ask for their own gift wraps (#p == authed pubkey).
-//
-// The unauthenticated branch (which calls RequestAuth to send a NIP-42 challenge
-// over the live connection) is exercised by the integration path, not here; the
-// data-protection guarantee for unauthenticated readers is covered by
-// TestGiftWrapQueryStored above.
 func TestGiftWrapOnRequest(t *testing.T) {
 	relay, _ := newTestRelay(t)
 

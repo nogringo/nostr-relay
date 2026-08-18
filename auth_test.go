@@ -23,6 +23,33 @@ func TestAuthChallengeSentOnConnect(t *testing.T) {
 	}
 }
 
+// Since the challenge is already sent on connect, a rejected gift-wrap REQ must
+// not pile up extra copies of it: khatru re-sends one by itself for any
+// "auth-required:" rejection, and that is the only one the client should get.
+func TestRejectedRequestSendsNoExtraChallenge(t *testing.T) {
+	relay, _ := newTestRelay(t)
+	server := httptest.NewServer(relay)
+	defer server.Close()
+	relayURL := "ws://" + strings.TrimPrefix(server.URL, "http://")
+
+	client := dialRelay(t, relayURL)
+	client.readUntil("AUTH")
+
+	recipient := nostr.GetPublicKey(nostr.Generate())
+	client.send(&nostr.ReqEnvelope{
+		SubscriptionID: "probe",
+		Filters: []nostr.Filter{{
+			Kinds: []nostr.Kind{nostr.KindGiftWrap},
+			Tags:  nostr.TagMap{"p": {recipient.Hex()}},
+		}},
+	})
+
+	got := client.readUntil("CLOSED")
+	if n := countLabel(got, "AUTH"); n != 1 {
+		t.Fatalf("rejected REQ sent %d challenges, want 1: %s", n, labels(got))
+	}
+}
+
 // The upfront challenge is a working one: authenticating with it must grant
 // access without the client ever being turned away first.
 func TestUpfrontChallengeAuthenticates(t *testing.T) {
