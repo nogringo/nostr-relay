@@ -36,7 +36,15 @@ No other public relay implements this. If you find one,
 open an issue - we'll
 update this claim.
 
-### 3. Efficient sync via NIP-77 Negentropy
+### 3. You can really vanish
+
+A NIP-62 request (`kind 62`) tagging this relay, or `ALL_RELAYS`, erases
+everything you published up to the request's `created_at`, your NIP-09 deletion
+events included, plus every gift wrap addressed to you. Those events are then
+refused if anyone tries to push them back. Set `RELAY_URLS` so the relay knows
+which URLs designate it.
+
+### 4. Efficient sync via NIP-77 Negentropy
 
 Resync an inbox from scratch in seconds, not minutes. NIP-77 is built in
 and on by default.
@@ -63,4 +71,5 @@ full protocol.
 | 42 | Authentication | OK |
 | 45 | Event Counts | OK |
 | 59 | Gift Wrap (recipient-only access + deletion) | OK |
+| 62 | Request to Vanish | OK |
 | 77 | Negentropy | OK |

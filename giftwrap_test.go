@@ -13,22 +13,20 @@ import (
 // newTestRelay wires the same hooks as main() but over an in-memory store.
 func newTestRelay(t *testing.T) (*khatru.Relay, *slicestore.SliceStore) {
 	t.Helper()
-	store := &slicestore.SliceStore{}
-	if err := store.Init(); err != nil {
-		t.Fatalf("store init: %v", err)
-	}
-	relay := khatru.NewRelay()
-	relay.UseEventstore(store, 400)
-	sendAuthChallengeOnConnect(relay)
-	restrictGiftWraps(relay)
+	relay, store, _ := newVanishTestRelay(t, testRelayURL)
 	return relay, store
 }
 
 func sign(t *testing.T, sk nostr.SecretKey, kind nostr.Kind, tags nostr.Tags) nostr.Event {
 	t.Helper()
+	return signAt(t, sk, kind, tags, nostr.Now())
+}
+
+func signAt(t *testing.T, sk nostr.SecretKey, kind nostr.Kind, tags nostr.Tags, createdAt nostr.Timestamp) nostr.Event {
+	t.Helper()
 	evt := nostr.Event{
 		PubKey:    nostr.GetPublicKey(sk),
-		CreatedAt: nostr.Now(),
+		CreatedAt: createdAt,
 		Kind:      kind,
 		Tags:      tags,
 		Content:   "x",

@@ -20,6 +20,7 @@ func applyRelayInfo(relay *khatru.Relay) {
 	relay.Info.Contact = os.Getenv("RELAY_CONTACT")
 	relay.Info.Icon = os.Getenv("RELAY_ICON")
 	relay.Info.Banner = os.Getenv("RELAY_BANNER")
+	relay.Info.AddSupportedNIP(62)
 
 	if raw := os.Getenv("RELAY_PUBKEY"); raw != "" {
 		if pk, err := parsePubKey(raw); err == nil {

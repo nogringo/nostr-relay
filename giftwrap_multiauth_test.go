@@ -128,6 +128,13 @@ func (c *testClient) authenticate(sk nostr.SecretKey, challenge string) {
 	}
 }
 
+func (c *testClient) publish(evt nostr.Event) *nostr.OKEnvelope {
+	c.t.Helper()
+	c.send(&nostr.EventEnvelope{Event: evt})
+	got := c.readUntil("OK")
+	return got[len(got)-1].(*nostr.OKEnvelope)
+}
+
 // fetchGiftWraps issues a REQ for the gift wraps addressed to recipient and
 // returns the terminating CLOSED (nil when the subscription reached EOSE), the
 // AUTH challenge received along the way (empty when none) and the event ids.

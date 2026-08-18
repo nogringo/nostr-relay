@@ -23,6 +23,8 @@ func main() {
 	applyRelayInfo(relay)
 	sendAuthChallengeOnConnect(relay)
 	restrictGiftWraps(relay)
+	stopVanishRequests := configureVanishRequests(relay, db)
+	defer stopVanishRequests()
 	configureInboundNotificationsFromEnv(relay)
 	configureAccountDeletionFromEnv(relay)
 
