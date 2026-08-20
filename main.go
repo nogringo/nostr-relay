@@ -25,6 +25,7 @@ func main() {
 	restrictGiftWraps(relay)
 	stopVanishRequests := configureVanishRequests(relay, db)
 	defer stopVanishRequests()
+	restrictDeletedEvents(relay, db)
 	configureInboundNotificationsFromEnv(relay)
 	configureAccountDeletionFromEnv(relay)
 

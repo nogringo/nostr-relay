@@ -36,6 +36,10 @@ No other public relay implements this. If you find one,
 open an issue - we'll
 update this claim.
 
+A deletion is also final here. Most relays wipe the event and then happily
+store it again the next time someone broadcasts it. This one refuses it for
+good, whoever re-publishes it and however long after.
+
 ### 3. You can really vanish
 
 A NIP-62 request (`kind 62`) tagging this relay, or `ALL_RELAYS`, erases
@@ -59,7 +63,7 @@ full protocol.
 | 01 | Basic Protocol | OK |
 | 02 | Follow List | OK |
 | 04 | Encrypted DM (legacy) | OK |
-| 09 | Event Deletion (with gift wrap recipient support) | OK |
+| 09 | Event Deletion (gift wrap recipient support, no re-publishing) | OK |
 | 11 | Relay Information | OK |
 | 12 | Generic Tag Queries | OK |
 | 16 | Event Treatment | OK |

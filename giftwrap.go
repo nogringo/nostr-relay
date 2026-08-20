@@ -85,18 +85,35 @@ func restrictGiftWraps(relay *khatru.Relay) {
 		return !isAuthedRecipient(ws.AuthedPublicKeys, p[1])
 	}
 
-	// 5) Deletion: a gift wrap is signed by a throw-away ephemeral key, so NIP-09's
-	//    default "only the author may delete" rule can never apply. NIP-59 instead
-	//    lets the recipient delete it, proven by the deletion event's own signature:
-	//    its pubkey must match the gift wrap's `p` tag. Every other kind keeps the
-	//    default rule, since setting AllowDeleting overrides it for all events.
+	// 5) Deletion: see deletersOf. Setting AllowDeleting overrides the default
+	//    NIP-09 rule for all events, so it has to restate it for the other kinds.
 	relay.AllowDeleting = func(ctx context.Context, target, deletion nostr.Event) bool {
-		if target.Kind == nostr.KindGiftWrap {
-			p := target.Tags.Find("p")
-			return p != nil && p[1] == deletion.PubKey.Hex()
-		}
-		return target.PubKey == deletion.PubKey
+		return slices.Contains(deletersOf(target), deletion.PubKey)
 	}
+}
+
+// deletersOf lists the pubkeys allowed to delete an event.
+//
+// A gift wrap is signed by a throw-away ephemeral key, so NIP-09's default "only
+// the author may delete" rule can never apply. NIP-59 instead lets the recipient
+// delete it, proven by the deletion event's own signature: its pubkey must match
+// the gift wrap's `p` tag. Every other kind keeps the default rule.
+//
+// restrictDeletedEvents narrows its tombstone lookups with this, so it has to
+// stay exactly the set AllowDeleting accepts.
+func deletersOf(event nostr.Event) []nostr.PubKey {
+	if event.Kind == nostr.KindGiftWrap {
+		p := event.Tags.Find("p")
+		if p == nil {
+			return nil
+		}
+		recipient, err := nostr.PubKeyFromHex(p[1])
+		if err != nil {
+			return nil
+		}
+		return []nostr.PubKey{recipient}
+	}
+	return []nostr.PubKey{event.PubKey}
 }
 
 // scopeGiftWraps drops every kind 1059 event whose recipient is not among the

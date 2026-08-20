@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/eventstore"
 	"fiatjaf.com/nostr/eventstore/slicestore"
 	"fiatjaf.com/nostr/khatru"
 )
@@ -27,13 +28,21 @@ func newVanishTestRelay(t *testing.T, relayURLs ...string) (*khatru.Relay, *slic
 // what a restart sees.
 func newVanishTestRelayOver(t *testing.T, store *slicestore.SliceStore, relayURLs ...string) (*khatru.Relay, *slicestore.SliceStore, *vanishRequests) {
 	t.Helper()
+	relay, v := wireRelay(t, store, relayURLs)
+	return relay, store, v
+}
+
+// wireRelay applies the same hooks as main(), in the same order.
+func wireRelay(t *testing.T, store eventstore.Store, relayURLs []string) (*khatru.Relay, *vanishRequests) {
+	t.Helper()
 	relay := khatru.NewRelay()
 	relay.UseEventstore(store, 400)
 	sendAuthChallengeOnConnect(relay)
 	restrictGiftWraps(relay)
 	v := attachVanishRequests(relay, store, relayURLs)
 	t.Cleanup(v.stop)
-	return relay, store, v
+	restrictDeletedEvents(relay, store)
+	return relay, v
 }
 
 func waitPurged(t *testing.T, v *vanishRequests) {
