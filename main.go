@@ -18,7 +18,8 @@ func main() {
 	}
 	defer db.Close()
 
-	relay.UseEventstore(db, 400)
+	relay.UseEventstore(db, maxQueryLimit)
+	applyQueryLimits(relay, db)
 	relay.Negentropy = true
 	applyRelayInfo(relay)
 	sendAuthChallengeOnConnect(relay)

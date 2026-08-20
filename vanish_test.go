@@ -36,7 +36,8 @@ func newVanishTestRelayOver(t *testing.T, store *slicestore.SliceStore, relayURL
 func wireRelay(t *testing.T, store eventstore.Store, relayURLs []string) (*khatru.Relay, *vanishRequests) {
 	t.Helper()
 	relay := khatru.NewRelay()
-	relay.UseEventstore(store, 400)
+	relay.UseEventstore(store, maxQueryLimit)
+	applyQueryLimits(relay, store)
 	sendAuthChallengeOnConnect(relay)
 	restrictGiftWraps(relay)
 	v := attachVanishRequests(relay, store, relayURLs)

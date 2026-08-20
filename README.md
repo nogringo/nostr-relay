@@ -76,4 +76,5 @@ full protocol.
 | 45 | Event Counts | OK |
 | 59 | Gift Wrap (recipient-only access + deletion) | OK |
 | 62 | Request to Vanish | OK |
+| 70 | Protected Events | OK |
 | 77 | Negentropy | OK |
