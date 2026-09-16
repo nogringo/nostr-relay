@@ -23,7 +23,7 @@ func main() {
 	relay.Negentropy = true
 	applyRelayInfo(relay)
 	sendAuthChallengeOnConnect(relay)
-	restrictGiftWraps(relay)
+	restrictGiftWraps(relay, db)
 	stopVanishRequests := configureVanishRequests(relay, db)
 	defer stopVanishRequests()
 	restrictDeletedEvents(relay, db)

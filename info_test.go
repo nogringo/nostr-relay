@@ -47,7 +47,7 @@ func newInfoTestRelay(t *testing.T) *khatru.Relay {
 	relay.UseEventstore(store, maxQueryLimit)
 	relay.Negentropy = true
 	applyRelayInfo(relay)
-	restrictGiftWraps(relay)
+	restrictGiftWraps(relay, store)
 	return relay
 }
 

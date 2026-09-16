@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/eventstore"
 	"fiatjaf.com/nostr/eventstore/lmdb"
 	"fiatjaf.com/nostr/eventstore/slicestore"
 	"fiatjaf.com/nostr/khatru"
@@ -100,24 +102,33 @@ func TestDeletedGiftWrapCannotBeRepublished(t *testing.T) {
 	deleted := sign(t, senderSK, nostr.KindGiftWrap, nostr.Tags{{"p", recipient.Hex()}})
 	kept := sign(t, senderSK, nostr.KindGiftWrap, nostr.Tags{{"p", recipient.Hex()}, {"t", "kept"}})
 
-	save(t, store, kept, sign(t, senderSK, nostr.KindDeletion, nostr.Tags{{"e", kept.ID.Hex()}}))
+	save(t, store, sign(t, senderSK, nostr.KindDeletion, nostr.Tags{{"e", kept.ID.Hex()}}))
 	deleteFromStore(t, store, deletionByID(t, recipientSK, deleted), deleted)
 
+	// the refusal sits in StoreEvent so that the OK stays the one a duplicate
+	// gets, see restrictDeletedEvents
 	ctx := khatru.ForceSetAuthed(context.Background(), recipient)
-	if reject, _ := relay.OnEvent(ctx, deleted); !reject {
+	if reject, msg := relay.OnEvent(ctx, deleted); reject {
+		t.Errorf("a deleted gift wrap must not be refused out loud: %s", msg)
+	}
+	if err := relay.StoreEvent(ctx, deleted); !errors.Is(err, eventstore.ErrDupEvent) {
+		t.Errorf("storing it again = %v, want %v", err, eventstore.ErrDupEvent)
+	}
+	if has(stored(t, store), deleted.ID) {
 		t.Error("a gift wrap deleted by its recipient must not come back")
 	}
+
 	// the ephemeral author's own request deletes nothing, so it must not block
-	if reject, msg := relay.OnEvent(ctx, kept); reject {
-		t.Errorf("a gift wrap the recipient never deleted must go through: %s", msg)
+	if err := relay.StoreEvent(ctx, kept); err != nil {
+		t.Errorf("a gift wrap the recipient never deleted must go through: %v", err)
 	}
 
 	// a gift wrap without a `p` tag has no one who may delete it, so no request
 	// can cover it, not even one tagging its id
 	malformed := sign(t, senderSK, nostr.KindGiftWrap, nil)
 	save(t, store, deletionByID(t, recipientSK, malformed))
-	if reject, msg := relay.OnEvent(ctx, malformed); reject {
-		t.Errorf("a gift wrap nobody may delete must never be blocked: %s", msg)
+	if err := relay.StoreEvent(ctx, malformed); err != nil {
+		t.Errorf("a gift wrap nobody may delete must never be blocked: %v", err)
 	}
 }
 

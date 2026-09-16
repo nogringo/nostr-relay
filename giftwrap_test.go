@@ -203,18 +203,32 @@ func TestGiftWrapPreventBroadcast(t *testing.T) {
 // A connection authenticated as several pubkeys gets the gift wraps of all of
 // them at once (e.g. a broad `{}` fetch), and no one else's; public events pass
 // through untouched.
-func TestScopeGiftWrapsMultipleRecipients(t *testing.T) {
-	a := nostr.GetPublicKey(nostr.Generate())
-	b := nostr.GetPublicKey(nostr.Generate())
-	c := nostr.GetPublicKey(nostr.Generate())
+func TestScopeToAuthedMultipleRecipients(t *testing.T) {
+	skA, skB, skC := nostr.Generate(), nostr.Generate(), nostr.Generate()
+	a := nostr.GetPublicKey(skA)
+	b := nostr.GetPublicKey(skB)
+	c := nostr.GetPublicKey(skC)
 	senderSK := nostr.Generate()
 
 	gwA := sign(t, senderSK, nostr.KindGiftWrap, nostr.Tags{{"p", a.Hex()}})
 	gwB := sign(t, senderSK, nostr.KindGiftWrap, nostr.Tags{{"p", b.Hex()}})
 	gwC := sign(t, senderSK, nostr.KindGiftWrap, nostr.Tags{{"p", c.Hex()}})
 	note := sign(t, senderSK, 1, nil)
+	delA := sign(t, skA, nostr.KindDeletion, nostr.Tags{{"e", gwA.ID.Hex()}, {"k", "1059"}})
+	delC := sign(t, skC, nostr.KindDeletion, nostr.Tags{{"e", gwC.ID.Hex()}, {"k", "1059"}})
+	publicDel := sign(t, skC, nostr.KindDeletion, nostr.Tags{{"e", note.ID.Hex()}, {"k", "1"}})
 
-	got := collect(scopeGiftWraps([]nostr.PubKey{a, b}, seqOf(gwA, gwB, gwC, note)))
+	got := collect(scopeToAuthed([]nostr.PubKey{a, b}, seqOf(gwA, gwB, gwC, note, delA, delC, publicDel)))
+
+	if !has(got, delA.ID) {
+		t.Error("should return a gift wrap deletion to its own author (a)")
+	}
+	if has(got, delC.ID) {
+		t.Error("must not return someone else's gift wrap deletion (c)")
+	}
+	if !has(got, publicDel.ID) {
+		t.Error("a deletion that does not cover gift wraps stays public")
+	}
 
 	if !has(got, gwA.ID) || !has(got, gwB.ID) {
 		t.Error("should return the gift wraps for every authenticated pubkey (a and b)")

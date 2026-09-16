@@ -42,6 +42,20 @@ func restrictDeletedEvents(relay *khatru.Relay, store eventstore.Store) {
 	}
 	relay.AllowDeleting = allowDeleting
 
+	wasDeleted := func(ctx context.Context, event nostr.Event) bool {
+		if event.Kind == nostr.KindDeletion || event.Kind.IsEphemeral() {
+			return false
+		}
+		// nobody may delete it, so no request can ever cover it. Leaving this to
+		// the lookups would query every pubkey's requests, since an empty
+		// Authors means "any author" in a filter.
+		if len(deletersOf(event)) == 0 {
+			return false
+		}
+		return deletedByID(ctx, store, allowDeleting, event) ||
+			deletedByAddress(ctx, store, allowDeleting, event)
+	}
+
 	prevOnEvent := relay.OnEvent
 	relay.OnEvent = func(ctx context.Context, event nostr.Event) (reject bool, msg string) {
 		if prevOnEvent != nil {
@@ -49,20 +63,27 @@ func restrictDeletedEvents(relay *khatru.Relay, store eventstore.Store) {
 				return reject, msg
 			}
 		}
-		if event.Kind == nostr.KindDeletion || event.Kind.IsEphemeral() {
+		// a deleted gift wrap is turned away by StoreEvent instead, silently
+		if event.Kind == nostr.KindGiftWrap {
 			return false, ""
 		}
-		// nobody may delete it, so no request can ever cover it. Leaving this to
-		// the lookups would query every pubkey's requests, since an empty
-		// Authors means "any author" in a filter.
-		if len(deletersOf(event)) == 0 {
-			return false, ""
-		}
-		if deletedByID(ctx, store, allowDeleting, event) ||
-			deletedByAddress(ctx, store, allowDeleting, event) {
+		if wasDeleted(ctx, event) {
 			return true, "blocked: this event was deleted"
 		}
 		return false, ""
+	}
+
+	// NIP-59: "relays SHOULD answer a republished kind 1059 with the same OK
+	// message whether it was deleted or is still stored". khatru answers a
+	// duplicate with a bare `OK true`, so a deleted gift wrap answers the same by
+	// failing the way the store does on a duplicate: nothing is written, nothing
+	// is broadcast and OnEventSaved never runs.
+	prevStoreEvent := relay.StoreEvent
+	relay.StoreEvent = func(ctx context.Context, event nostr.Event) error {
+		if event.Kind == nostr.KindGiftWrap && wasDeleted(ctx, event) {
+			return eventstore.ErrDupEvent
+		}
+		return prevStoreEvent(ctx, event)
 	}
 }
 

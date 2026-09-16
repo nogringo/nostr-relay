@@ -5,7 +5,7 @@
 
 ## Why this relay
 
-Most Nostr relays don't bother with three things that matter for private
+Most Nostr relays don't bother with four things that matter for private
 messaging. This one does.
 
 ### 1. Your gift wraps stay private
@@ -40,7 +40,18 @@ A deletion is also final here. Most relays wipe the event and then happily
 store it again the next time someone broadcasts it. This one refuses it for
 good, whoever re-publishes it and however long after.
 
-### 3. You can really vanish
+### 3. Your deletions stay yours
+
+The sender knows the gift wrap id, so on a naive relay they can watch when you
+delete it. NIP-59 closes that, and this relay implements it:
+
+- A `kind 5` tagged `k 1059` is only served to its author, over REQ, COUNT and
+  the live path alike. Tag your gift wrap deletions with `k 1059`, and put
+  nothing else in them.
+- A re-published gift wrap is answered the same way whether it was deleted or
+  is still stored, and so is a deletion request aimed at one.
+
+### 4. You can really vanish
 
 A NIP-62 request (`kind 62`) tagging this relay, or `ALL_RELAYS`, erases
 everything you published up to the request's `created_at`, your NIP-09 deletion
@@ -48,7 +59,7 @@ events included, plus every gift wrap addressed to you. Those events are then
 refused if anyone tries to push them back. Set `RELAY_URLS` so the relay knows
 which URLs designate it.
 
-### 4. Efficient sync via NIP-77 Negentropy
+### 5. Efficient sync via NIP-77 Negentropy
 
 Resync an inbox from scratch in seconds, not minutes. NIP-77 is built in
 and on by default.

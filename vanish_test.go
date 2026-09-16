@@ -39,7 +39,7 @@ func wireRelay(t *testing.T, store eventstore.Store, relayURLs []string) (*khatr
 	relay.UseEventstore(store, maxQueryLimit)
 	applyQueryLimits(relay, store)
 	sendAuthChallengeOnConnect(relay)
-	restrictGiftWraps(relay)
+	restrictGiftWraps(relay, store)
 	v := attachVanishRequests(relay, store, relayURLs)
 	t.Cleanup(v.stop)
 	restrictDeletedEvents(relay, store)
