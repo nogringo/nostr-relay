@@ -38,7 +38,7 @@ func applyRelayInfo(relay *khatru.Relay) {
 
 	// khatru advertises NIP-86 by default, but no management API is wired here.
 	relay.Info.SupportedNIPs = slices.DeleteFunc(relay.Info.SupportedNIPs, func(n any) bool { return n == 86 })
-	relay.Info.AddSupportedNIPs([]int{59, 62})
+	relay.Info.AddSupportedNIPs([]string{"59", "62"})
 
 	relay.Info.Limitation = &nip11.RelayLimitationDocument{
 		MaxMessageLength: int(relay.MaxMessageSize),
