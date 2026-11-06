@@ -20,7 +20,7 @@ func main() {
 
 	relay.UseEventstore(db, maxQueryLimit)
 	applyQueryLimits(relay, db)
-	relay.Negentropy = true
+	configureNegentropyFromEnv(relay)
 	applyRelayInfo(relay)
 	sendAuthChallengeOnConnect(relay)
 	restrictGiftWraps(relay, db)

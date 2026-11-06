@@ -45,7 +45,7 @@ func newInfoTestRelay(t *testing.T) *khatru.Relay {
 	}
 	relay := khatru.NewRelay()
 	relay.UseEventstore(store, maxQueryLimit)
-	relay.Negentropy = true
+	configureNegentropyFromEnv(relay)
 	applyRelayInfo(relay)
 	restrictGiftWraps(relay, store)
 	return relay
@@ -110,6 +110,15 @@ func TestRelayInfoAdvertisesImplementedNIPs(t *testing.T) {
 	// No management API is wired, so every NIP-86 call would fail.
 	if slices.Contains(nips, 86) {
 		t.Errorf("nip 86 advertised but not implemented, got %v", nips)
+	}
+}
+
+func TestRelayInfoOmitsNIP77WhenDisabled(t *testing.T) {
+	t.Setenv("NIP77_ENABLED", "false")
+
+	nips := supportedNIPs(t, fetchRelayInfo(t, newInfoTestRelay(t)))
+	if slices.Contains(nips, 77) {
+		t.Errorf("nip 77 advertised while disabled, got %v", nips)
 	}
 }
 

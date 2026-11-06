@@ -62,7 +62,7 @@ which URLs designate it.
 ### 5. Efficient sync via NIP-77 Negentropy
 
 Resync an inbox from scratch in seconds, not minutes. NIP-77 is built in
-and on by default.
+and on by default. Set `NIP77_ENABLED=false` to turn it off.
 
 ## Supported NIPs
 
