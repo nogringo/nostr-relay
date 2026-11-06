@@ -84,7 +84,7 @@ full protocol.
 | 33 | Parameterized Replaceable | OK |
 | 40 | Expiration | OK |
 | 42 | Authentication | OK |
-| 45 | Event Counts | OK |
+| 45 | Event Counts (`NIP45_ENABLED=false` to turn off) | OK |
 | 59 | Gift Wrap (recipient-only access + deletion) | OK |
 | 62 | Request to Vanish | OK |
 | 70 | Protected Events | OK |

@@ -43,6 +43,7 @@ func wireRelay(t *testing.T, store eventstore.Store, relayURLs []string) (*khatr
 	v := attachVanishRequests(relay, store, relayURLs)
 	t.Cleanup(v.stop)
 	restrictDeletedEvents(relay, store)
+	configureCountFromEnv(relay)
 	return relay, v
 }
 

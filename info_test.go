@@ -48,6 +48,7 @@ func newInfoTestRelay(t *testing.T) *khatru.Relay {
 	configureNegentropyFromEnv(relay)
 	applyRelayInfo(relay)
 	restrictGiftWraps(relay, store)
+	configureCountFromEnv(relay)
 	return relay
 }
 
@@ -119,6 +120,15 @@ func TestRelayInfoOmitsNIP77WhenDisabled(t *testing.T) {
 	nips := supportedNIPs(t, fetchRelayInfo(t, newInfoTestRelay(t)))
 	if slices.Contains(nips, 77) {
 		t.Errorf("nip 77 advertised while disabled, got %v", nips)
+	}
+}
+
+func TestRelayInfoOmitsNIP45WhenDisabled(t *testing.T) {
+	t.Setenv("NIP45_ENABLED", "false")
+
+	nips := supportedNIPs(t, fetchRelayInfo(t, newInfoTestRelay(t)))
+	if slices.Contains(nips, 45) {
+		t.Errorf("nip 45 advertised while disabled, got %v", nips)
 	}
 }
 
