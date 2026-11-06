@@ -11,7 +11,8 @@ services:
     volumes:
       - relay-db:/data
     # Put a TLS reverse proxy in front that forwards the original Host header,
-    # which the relay uses to build the NIP-42 AUTH challenge URL.
+    # which the relay uses to build the NIP-42 AUTH challenge URL, and appends
+    # the client address to X-Forwarded-For, which the per-IP limits key on.
 
 volumes:
   relay-db:

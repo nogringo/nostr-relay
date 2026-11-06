@@ -44,6 +44,8 @@ func wireRelay(t *testing.T, store eventstore.Store, relayURLs []string) (*khatr
 	t.Cleanup(v.stop)
 	restrictDeletedEvents(relay, store)
 	configureCountFromEnv(relay)
+	limitConnections(relay)
+	limitRequests(relay)
 	return relay, v
 }
 

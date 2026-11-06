@@ -30,6 +30,8 @@ func main() {
 	configureInboundNotificationsFromEnv(relay)
 	configureAccountDeletionFromEnv(relay)
 	configureCountFromEnv(relay)
+	limitConnections(relay)
+	limitRequests(relay)
 
 	// NIP-42 host validation trusts the Host the reverse proxy forwards, so the
 	// relay must stay reachable only through that proxy: bind to loopback by
