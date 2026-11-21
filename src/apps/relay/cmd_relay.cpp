@@ -26,6 +26,19 @@ static void checkConfig() {
         }
     }
 
+    foreachCommaSeparated(cfg().relay__admin__pubkeys, [](std::string_view pubkey){
+        try {
+            parsePubkey(pubkey);
+        } catch (std::exception &e) {
+            LW << "Ignoring relay.admin.pubkeys entry " << pubkey << ": " << e.what();
+        }
+        return true;
+    });
+
+    if (cfg().relay__admin__pubkeys.size() && cfg().relay__auth__serviceUrl.empty()) {
+        LW << "relay.admin.pubkeys is set but relay.auth.serviceUrl is empty, so the NIP-86 management API will refuse every request";
+    }
+
     if (cfg().events__rejectEphemeralEventsOlderThanSeconds >= cfg().events__ephemeralEventsLifetimeSeconds) {
         LW << "rejectEphemeralEventsOlderThanSeconds is >= ephemeralEventsLifetimeSeconds, which could result in unnecessary disk activity";
     }
@@ -70,6 +83,10 @@ void RelayServer::run() {
 
     tpNegentropy.init("Negentropy", cfg().relay__numThreads__negentropy, [this](auto &thr){
         runNegentropy(thr);
+    });
+
+    tpAdmin.init("Admin", 1, [this](auto &thr){
+        runAdmin(thr);
     });
 
     cronThread = std::thread([this]{

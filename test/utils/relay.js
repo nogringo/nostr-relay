@@ -12,6 +12,7 @@ export function config(
   relayDb,
   relayPort = 40553,
   restrictReadToInvolvedPubkey = true,
+  adminPubkeys = "",
 ) {
   return `
 db = "${relayDb}/"
@@ -27,6 +28,10 @@ relay {
     serviceUrl = "wss://relay.test, wss://alias.test"
     restrictedReadKinds = "4, 1059"
     restrictReadToInvolvedPubkey = ${restrictReadToInvolvedPubkey ? "true" : "false"}
+  }
+
+  admin {
+    pubkeys = "${adminPubkeys}"
   }
 
   numThreads {

@@ -27,6 +27,7 @@ If you are using strfry, please [join our telegram chat](https://t.me/strfry_use
 * [Operating](#operating)
     * [Running a relay](#running-a-relay)
     * [Configuration](#configuration)
+    * [Admin interface](#admin-interface)
     * [Selecting and Deleting Events](#selecting-and-deleting-events)
     * [Importing data](#importing-data)
     * [Exporting data](#exporting-data)
@@ -117,6 +118,43 @@ However, in addition to `db` these are commonly used config parameters:
 * `relay.port`: By default this is `7777`, but you may want to listen on a different port.
 * `relay.auth.serviceUrl`: This is the external address of your relay to the outside world. It must be set for NIP-42 AUTH and NIP-62 requests to vanish to work, typically something like `wss://my-relay.com`. If the relay is reachable at several URLs, list them all separated by commas, for example `wss://my-relay.com, wss://nostr.my-relay.com`.
 * `relay.info.name`, `relay.info.description`, etc: These are shown in the NIP-11 output and the HTML landing page served by strfry. They provide users extra information about who runs this relay, and its policies.
+* `relay.admin.pubkeys`: The pubkeys allowed to manage the relay from its [admin interface](#admin-interface).
+
+### Admin interface
+
+strfry can be managed from a browser at `https://my-relay.com/admin`, or by any client that speaks the [NIP-86](https://github.com/nostr-protocol/nips/blob/master/86.md) relay management API. To turn it on, set both of these:
+
+    relay {
+        auth {
+            serviceUrl = "wss://my-relay.com"
+        }
+
+        admin {
+            pubkeys = "npub1..."
+        }
+    }
+
+Each request is authorized with a [NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md) event signed by one of these pubkeys, whose `u` tag must name the relay's `serviceUrl`. The page signs them with a browser extension (NIP-07) or a remote signer (NIP-46, through a `bunker://` link or a `nostrconnect://` code).
+
+From the page you can:
+
+* See the relay's activity: stored events by kind, database size, connections.
+* Review reported events (NIP-56), and keep or ban them.
+* Ban pubkeys and events. A ban deletes the matching events and refuses them from then on.
+* Restrict who can publish to a list of pubkeys, and which kinds are accepted.
+* Block IP addresses. A blocked address is disconnected and can't connect again.
+* Change the name, description and icon shown in NIP-11 and on the landing page.
+
+Bans and lists are stored in the database. They survive restarts, and `strfry import`, `stream`, `sync` and `router` honor them too. A few rules to know:
+
+* Admins can always publish, even when only listed pubkeys can.
+* Under a pubkey allow list, a gift wrap (NIP-59) is accepted when its recipient is on the list, since its author is a throwaway key.
+* Requests to vanish (NIP-62) are always accepted, as NIP-62 requires.
+* When the banned event is the most recent one stored, the cron thread deletes it once a newer event arrives, so its database ID is never reused.
+
+Besides the standard NIP-86 methods, strfry supports `stats`, which returns the numbers shown on the page, and `unallowkind` and `undisallowkind`, which take a kind off a list without adding it to the other. The NIP-43 role and claim methods are not supported.
+
+The page's JavaScript dependencies are bundled in `admin/dist/nostr.js`. That file is committed, so building strfry needs no JavaScript tooling. To update the dependencies, run `npm ci && npm run build` in `admin/`.
 
 ### Selecting and Deleting Events
 

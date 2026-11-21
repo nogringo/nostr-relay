@@ -28,6 +28,10 @@ config:
     desc: "When a filter matches restrictedReadKinds, also require the authenticated pubkey to appear in its 'authors' or '#p' set. A gift wrap is only readable by its '#p' recipient, and its deletion request by the author of that request."
     default: true
 
+  - name: relay__admin__pubkeys
+    desc: "Comma-separated list of pubkeys (npub or 64 hex digits) allowed to manage the relay through the NIP-86 API and the /admin page. Empty disables both. Requires relay.auth.serviceUrl, the URL that NIP-98 authorizations must name."
+    default: ""
+
   - name: relay__info__name
     desc: "NIP-11: Name of this server. Short/descriptive (< 30 characters)"
     default: "strfry default"

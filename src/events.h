@@ -61,6 +61,7 @@ enum class EventWriteStatus {
     Duplicate,
     Replaced,
     Deleted,
+    Blocked,
 };
 
 
@@ -69,6 +70,7 @@ struct EventToWrite {
     std::string jsonStr;
     void *userData = nullptr;
     EventWriteStatus status = EventWriteStatus::Pending;
+    std::string blockedReason;
     uint64_t levId = 0;
 
     EventToWrite() {}

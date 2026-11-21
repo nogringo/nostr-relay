@@ -1,6 +1,7 @@
 #include <hoytech/timer.h>
 
 #include "RelayServer.h"
+#include "AdminStore.h"
 
 
 void RelayServer::runCron() {
@@ -58,6 +59,31 @@ void RelayServer::runCron() {
 
             if (numDeleted) LI << "Deleted " << numDeleted << " events (ephemeral=" << numEphemeral << " expired=" << numExpired << ")";
         }
+    });
+
+
+
+    // Delete banned events, including the most recent one that a ban leaves behind until a newer event is stored
+
+    cron.repeat(9 * 1'000'000UL, [&]{
+        std::vector<uint64_t> levIds;
+
+        {
+            auto txn = env.txn_ro();
+            levIds = adminStore::bannedLevIds(txn);
+        }
+
+        if (levIds.empty()) return;
+
+        auto txn = env.txn_rw();
+        NegentropyFilterCache neFilterCache;
+
+        std::erase(levIds, getMostRecentLevId(txn));
+        uint64_t numDeleted = deleteEvents(txn, neFilterCache, levIds);
+
+        txn.commit();
+
+        if (numDeleted) LI << "Deleted " << numDeleted << " banned events";
     });
 
 

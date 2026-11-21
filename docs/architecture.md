@@ -66,6 +66,7 @@ This thread is responsible for most DB writes:
 * Adding new events to the DB
 * Performing event deletion (NIP-09)
 * Processing requests to vanish (NIP-62)
+* Refusing events that a NIP-86 ban or allow list excludes
 * Deleting replaceable events
 
 It is important there is only 1 writer thread: Because LMDB has an exclusive-write lock, multiple writers would imply contention. Additionally, when multiple events queue up, there is work that can be amortised across the batch (and the `fsync`). This serves as a natural counterbalance against high write volumes.
@@ -140,9 +141,15 @@ When [NEG-OPEN](https://github.com/hoytech/strfry/blob/master/docs/negentropy.md
 
 
 
+## Admin
+
+This thread answers the [NIP-86](https://github.com/nostr-protocol/nips/blob/master/86.md) relay management API. The websocket thread hands it each HTTP request whose `Content-Type` is `application/nostr+json+rpc`. It checks the NIP-98 authorization, applies the change in its own write transaction, and sends the HTTP response back through the websocket thread.
+
+Bans, allow lists and NIP-11 overrides live in LMDB tables. The writer checks them inside its write transaction, so a ban can't race with an insert, and so do `strfry import`, `stream`, `sync` and `router`.
+
 ## Cron
 
-This thread is responsible for periodic maintenance operations. Currently this consists of applying a retention-policy and deleting ephemeral events.
+This thread is responsible for periodic maintenance operations. Currently this consists of applying a retention-policy, deleting ephemeral events, and deleting banned events that could not be deleted at once because they were the most recent ones stored.
 
 
 # Testing

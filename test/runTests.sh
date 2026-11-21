@@ -31,6 +31,12 @@ node "./test/tests/giftWrapPrivacyTest.js" \
   && pass "./test/tests/giftWrapPrivacyTest.js" \
   || fail "./test/tests/giftWrapPrivacyTest.js failed"
 
+info "running admin API tests..."
+
+node "./test/tests/adminApiTest.js" \
+  && pass "./test/tests/adminApiTest.js" \
+  || fail "./test/tests/adminApiTest.js failed"
+
 info "Seeding events..."
 
 perl "./test/utils/generate-seed-data.pl" -o - | ./strfry --config ./test/cfgs/test.conf import --no-verify

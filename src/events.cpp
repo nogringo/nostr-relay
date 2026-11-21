@@ -2,6 +2,7 @@
 
 #include "events.h"
 #include "jsonParseUtils.h"
+#include "AdminStore.h"
 
 
 std::string nostrJsonToPackedEvent(const tao::json::value &v) {
@@ -309,6 +310,13 @@ void writeEvents(lmdb::txn &txn, NegentropyFilterCache &neFilterCache, std::vect
 
             if (lookupEventById(txn, packed.id()) || (i != 0 && ev.id() == evs[i-1].id())) {
                 ev.status = EventWriteStatus::Duplicate;
+                continue;
+            }
+
+            ev.blockedReason = adminStore::writeRejection(txn, packed);
+
+            if (ev.blockedReason.size()) {
+                ev.status = EventWriteStatus::Blocked;
                 continue;
             }
 

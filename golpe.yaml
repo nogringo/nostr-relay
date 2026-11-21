@@ -114,6 +114,20 @@ tablesRaw:
   GiftWrapDeletion:
     flags: 'MDB_INTEGERKEY'
 
+  ## NIP-86 relay management lists. Keys are raw pubkeys, event ids, IPs or native uint64 kinds, vals are the reason
+  BannedPubkey:
+  AllowedPubkey:
+  BannedEvent:
+  AllowedEvent:
+  BlockedIP:
+  AllowedKind:
+    flags: 'MDB_INTEGERKEY'
+  DisallowedKind:
+    flags: 'MDB_INTEGERKEY'
+
+  ## NIP-11 fields changed through NIP-86, overriding the config file. Keys are field names
+  RelayInfo:
+
 config:
   - name: db
     desc: "Directory that contains the strfry LMDB database"

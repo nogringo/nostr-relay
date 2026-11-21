@@ -14,6 +14,8 @@
 
 #include "golpe.h"
 
+#include "Bech32Utils.h"
+
 
 
 Bytes32 sha256(std::string_view inp) {
@@ -129,7 +131,7 @@ void exitOnSigPipe() {
 }
 
 
-static void foreachCommaSeparated(std::string_view str, const std::function<bool(std::string_view)> &cb) {
+void foreachCommaSeparated(std::string_view str, const std::function<bool(std::string_view)> &cb) {
     size_t pos = 0;
     while (pos < str.size()) {
         size_t nextComma = str.find(',', pos);
@@ -161,8 +163,8 @@ std::string normalizeRelayUrl(std::string_view input) {
     std::transform(url.begin(), url.end(), url.begin(), [](unsigned char c){ return std::tolower(c); });
 
     std::string_view defaultPort;
-    if (url.starts_with("wss://")) defaultPort = ":443";
-    else if (url.starts_with("ws://")) defaultPort = ":80";
+    if (url.starts_with("wss://") || url.starts_with("https://")) defaultPort = ":443";
+    else if (url.starts_with("ws://") || url.starts_with("http://")) defaultPort = ":80";
 
     auto pos = url.find("://");
     if (pos != std::string::npos) url.erase(0, pos + 3);
@@ -194,4 +196,26 @@ std::string primaryServiceUrl() {
     });
 
     return primary;
+}
+
+
+std::string parsePubkey(std::string_view str) {
+    if (str.starts_with("npub1")) return decodeBech32Simple(str);
+
+    if (str.size() != 64) throw herr("pubkey must be an npub or 64 hex digits");
+    return from_hex(str);
+}
+
+flat_hash_set<std::string> parsePubkeyList(std::string_view str) {
+    flat_hash_set<std::string> pubkeys;
+
+    foreachCommaSeparated(str, [&](std::string_view item){
+        try {
+            pubkeys.insert(parsePubkey(item));
+        } catch (...) {
+        }
+        return true;
+    });
+
+    return pubkeys;
 }

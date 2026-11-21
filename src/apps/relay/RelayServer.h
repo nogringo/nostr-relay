@@ -44,7 +44,16 @@ struct MsgWebsocket : NonCopyable {
     struct GracefulShutdown {
     };
 
-    using Var = std::variant<Send, SendBinary, SendEventToBatch, GracefulShutdown>;
+    struct HttpReply {
+        uint64_t reqId;
+        std::string payload;
+    };
+
+    struct CloseIP {
+        std::string ipAddr;
+    };
+
+    using Var = std::variant<Send, SendBinary, SendEventToBatch, GracefulShutdown, HttpReply, CloseIP>;
     Var msg;
     MsgWebsocket(Var &&msg_) : msg(std::move(msg_)) {}
 };
@@ -170,6 +179,39 @@ struct MsgNegentropy : NonCopyable {
     MsgNegentropy(Var &&msg_) : msg(std::move(msg_)) {}
 };
 
+struct MsgAdmin : NonCopyable {
+    struct Rpc {
+        uint64_t reqId;
+        std::string authorization;
+        std::string body;
+    };
+
+    using Var = std::variant<Rpc>;
+    Var msg;
+    MsgAdmin(Var &&msg_) : msg(std::move(msg_)) {}
+};
+
+inline std::string httpResponse(int status, std::string_view contentType, std::string_view content, std::string_view extraHeaders = "") {
+    std::string statusText =
+        status == 200 ? "OK" :
+        status == 204 ? "No Content" :
+        status == 400 ? "Bad Request" :
+        status == 401 ? "Unauthorized" :
+        status == 413 ? "Payload Too Large" :
+        "Error";
+
+    std::string output = "HTTP/1.1 " + std::to_string(status) + " " + statusText + "\r\n";
+    if (contentType.size()) output += std::string("Content-Type: ") + std::string(contentType) + "\r\n";
+    output += "Access-Control-Allow-Origin: *\r\n";
+    output += "Connection: keep-alive\r\n";
+    output += "Server: strfry\r\n";
+    output += std::string("Content-Length: ") + std::to_string(content.size()) + "\r\n";
+    output += extraHeaders;
+    output += "\r\n";
+    output += content;
+    return output;
+}
+
 struct RelayServerCtx {
     secp256k1_context *secpCtx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
     FilterValidator filterValidator;
@@ -179,6 +221,7 @@ struct RelayServerCtx {
 
 struct RelayServer {
     uS::Async *hubTrigger = nullptr;
+    uint64_t startedAt = hoytech::curr_time_s();
 
     // Thread Pools
 
@@ -188,6 +231,7 @@ struct RelayServer {
     ThreadPool<MsgReqWorker> tpReqWorker;
     ThreadPool<MsgReqMonitor> tpReqMonitor;
     ThreadPool<MsgNegentropy> tpNegentropy;
+    ThreadPool<MsgAdmin> tpAdmin;
     std::thread cronThread;
     std::thread signalHandlerThread;
 
@@ -210,6 +254,12 @@ struct RelayServer {
     void runReqMonitor(ThreadPool<MsgReqMonitor>::Thread &thr);
 
     void runNegentropy(ThreadPool<MsgNegentropy>::Thread &thr);
+
+    void runAdmin(ThreadPool<MsgAdmin>::Thread &thr);
+    std::string adminRpc(secp256k1_context *secpCtx, Decompressor &decomp, const MsgAdmin::Rpc &rpc);
+    tao::json::value adminMethod(Decompressor &decomp, const std::string &method, const tao::json::value::array_t &params);
+    tao::json::value eventsNeedingModeration(Decompressor &decomp);
+    tao::json::value stats();
 
     void runCron();
 

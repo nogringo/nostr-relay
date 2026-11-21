@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="relay-url" content="{{RELAY_URL}}">
+<meta name="admin-enabled" content="{{ADMIN_ENABLED}}">
+<title>Relay admin</title>
+<link rel="icon" href="../favicon.ico">
+<style>
+:root {
+    --paper: #F4F6F8;
+    --panel: #FFFFFF;
+    --ink: #1D2532;
+    --ink-2: #4A5566;
+    --ink-3: #66717F;
+    --line: #DDE2E8;
+    --field: #FFFFFF;
+    --flame: #C8372D;
+    --saffron: #E2A500;
+    --leaf: #2F7A4D;
+    --bar: #2F62C8;
+    --track: #E9EDF2;
+    --focus: #2F62C8;
+    --on-strong: #FFFFFF;
+
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+    color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --paper: #12161D;
+        --panel: #1B212B;
+        --ink: #E6EAF0;
+        --ink-2: #AEB7C4;
+        --ink-3: #8D97A5;
+        --line: #2C3442;
+        --field: #141920;
+        --bar: #5E8DEB;
+        --track: #252C38;
+        --focus: #7FA6F0;
+    }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 15px/1.5 var(--sans);
+}
+
+[hidden] { display: none !important; }
+
+h1, h2, h3, p, ul, ol, dl, dd { margin: 0; padding: 0; }
+ul, ol { list-style: none; }
+
+a { color: var(--focus); }
+
+:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+}
+
+.mono {
+    font-family: var(--mono);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+.muted { color: var(--ink-3); }
+
+/* Controls */
+
+button, input, textarea {
+    font: inherit;
+    color: inherit;
+}
+
+button {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 6px;
+    padding: 7px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+button:hover { border-color: var(--ink-3); }
+button:disabled { opacity: .55; cursor: progress; }
+
+button.primary {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper);
+}
+
+button.danger {
+    background: var(--flame);
+    border-color: var(--flame);
+    color: var(--on-strong);
+}
+
+button.danger-outline {
+    border-color: var(--flame);
+    color: var(--flame);
+}
+
+button.allow {
+    background: var(--leaf);
+    border-color: var(--leaf);
+    color: var(--on-strong);
+}
+
+button.quiet {
+    border-color: transparent;
+    background: transparent;
+    color: var(--ink-2);
+    padding: 7px 8px;
+}
+
+button.quiet:hover { color: var(--ink); border-color: var(--line); }
+
+input, textarea {
+    background: var(--field);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 7px 10px;
+    min-width: 0;
+}
+
+input::placeholder, textarea::placeholder { color: var(--ink-3); }
+
+label { display: block; font-weight: 600; margin-bottom: 4px; }
+
+.inline-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.inline-form input { flex: 1 1 180px; }
+.inline-form input.wide { flex: 3 1 260px; }
+.inline-form input.narrow { flex: 0 1 180px; }
+
+/* Sign-in */
+
+.signin {
+    max-width: 440px;
+    margin: 0 auto;
+    padding: 56px 16px;
+}
+
+.identity {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+}
+
+.relay-icon {
+    flex: none;
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    object-fit: cover;
+    background: var(--ink);
+    color: var(--paper);
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    font-size: 22px;
+}
+
+.relay-name {
+    font-size: 28px;
+    line-height: 1.15;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    overflow-wrap: anywhere;
+}
+
+.relay-url { color: var(--ink-3); }
+
+.signin .lede { margin: 24px 0 28px; color: var(--ink-2); }
+
+.method {
+    border-top: 1px solid var(--line);
+    padding: 20px 0;
+}
+
+.method h2 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.method p { color: var(--ink-2); margin-bottom: 12px; }
+
+.qr {
+    margin-top: 16px;
+    padding: 16px;
+    background: #FFFFFF;
+    border-radius: 8px;
+    width: min(260px, 100%);
+}
+
+.qr svg { display: block; width: 100%; height: auto; }
+
+.status { margin-top: 12px; color: var(--ink-2); }
+.status.error { color: var(--flame); }
+
+/* Console */
+
+.topbar {
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+}
+
+.topbar-inner, main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0 24px;
+}
+
+.topbar-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px 24px;
+    padding: 20px 0 16px;
+}
+
+.account {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--ink-2);
+}
+
+.signing {
+    color: var(--ink);
+    background: var(--saffron);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+nav[role="tablist"] {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+nav[role="tablist"] button {
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: none;
+    padding: 10px 12px;
+    color: var(--ink-2);
+    font-weight: 500;
+}
+
+nav[role="tablist"] button[aria-selected="true"] {
+    color: var(--ink);
+    border-bottom-color: var(--ink);
+}
+
+.count {
+    display: inline-block;
+    min-width: 20px;
+    margin-left: 6px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: var(--saffron);
+    color: #1D2532;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 20px;
+    text-align: center;
+}
+
+main { padding-top: 24px; padding-bottom: 64px; }
+
+.banner {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    justify-content: space-between;
+    border: 1px solid var(--flame);
+    border-radius: 8px;
+    padding: 10px 12px 10px 16px;
+    margin-bottom: 20px;
+    background: var(--panel);
+}
+
+.banner p { padding-top: 6px; overflow-wrap: anywhere; }
+
+section.panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+}
+
+.panel-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.panel h2 { font-size: 18px; font-weight: 650; }
+.panel .explain { color: var(--ink-2); margin-top: 4px; max-width: 70ch; }
+.panel h3 { font-size: 15px; font-weight: 600; margin-top: 20px; }
+
+.empty { color: var(--ink-3); margin-top: 12px; }
+
+/* Overview */
+
+.kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 20px 24px;
+    margin-top: 16px;
+}
+
+.kpi dt { color: var(--ink-2); }
+
+.kpi dd {
+    font-size: 26px;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+}
+
+.kpi .detail { font-size: 13px; font-weight: 400; color: var(--ink-3); letter-spacing: 0; }
+
+.facts { margin-top: 18px; color: var(--ink-2); }
+.facts strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.bars { margin-top: 16px; }
+
+.bar-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(120px, 210px) 1fr auto;
+    align-items: center;
+    gap: 12px;
+    padding: 5px 0;
+}
+
+.bar-label { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.bar-track { height: 10px; }
+
+.bar {
+    display: block;
+    height: 10px;
+    min-width: 2px;
+    background: var(--bar);
+    border-radius: 0 4px 4px 0;
+}
+
+.bar-value { font-variant-numeric: tabular-nums; text-align: right; min-width: 64px; }
+
+.bar-tip {
+    position: absolute;
+    right: 0;
+    bottom: 100%;
+    background: var(--ink);
+    color: var(--paper);
+    font-size: 13px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    visibility: hidden;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.bar-row:hover .bar-tip, .bar-row:focus .bar-tip { visibility: visible; }
+
+.footnote { margin-top: 16px; font-size: 13px; color: var(--ink-3); }
+
+/* Lists */
+
+.rows { margin-top: 12px; }
+
+.row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--line);
+}
+
+.row:last-child { border-bottom: 1px solid var(--line); }
+.row-main { min-width: 0; }
+.row .reason { color: var(--ink-2); overflow-wrap: anywhere; }
+
+.chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 2px 2px 2px 10px;
+}
+
+.chip button { padding: 2px 8px; }
+
+.state {
+    margin-top: 12px;
+    padding-left: 12px;
+    border-left: 3px solid var(--line);
+}
+
+.state.closed { border-left-color: var(--saffron); }
+
+/* Reported events */
+
+.tickets { margin-top: 12px; display: grid; gap: 12px; }
+
+.ticket {
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--saffron);
+    border-radius: 8px;
+    padding: 14px 16px;
+}
+
+.ticket-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    color: var(--ink-3);
+    font-size: 13px;
+}
+
+.ticket-meta .author { color: var(--ink); font-weight: 600; }
+
+.ticket-content {
+    margin: 8px 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 14em;
+    overflow: auto;
+}
+
+.ticket-reason { color: var(--ink-2); overflow-wrap: anywhere; }
+
+.ticket-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+/* Relay info */
+
+.field { margin-top: 16px; }
+.field input, .field textarea { width: 100%; }
+.field textarea { min-height: 96px; resize: vertical; }
+.field .hint { color: var(--ink-3); font-size: 13px; margin-top: 4px; }
+.icon-preview { margin-top: 10px; width: 64px; height: 64px; border-radius: 12px; object-fit: cover; }
+.form-actions { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
+
+@media (max-width: 600px) {
+    .topbar-inner, main { padding: 0 16px; }
+    main { padding-top: 16px; }
+    section.panel { padding: 16px; }
+    .relay-name { font-size: 22px; }
+    .kpis { grid-template-columns: 1fr 1fr; gap: 16px; }
+    .kpi dd { font-size: 22px; }
+    nav[role="tablist"] button { padding: 10px 8px; }
+    .bar-row { grid-template-columns: 1fr auto; gap: 4px 8px; padding: 6px 0; }
+    .bar-label { white-space: normal; }
+    .bar-track { grid-column: 1 / -1; grid-row: 2; }
+    .row { flex-wrap: wrap; }
+}
+</style>
+</head>
+<body>
+
+<div id="disabled" class="signin" hidden>
+    <div class="identity">
+        <div class="relay-icon" aria-hidden="true">!</div>
+        <h1 class="relay-name">The admin page is off</h1>
+    </div>
+    <p class="lede">To manage this relay here, list your pubkey in <code>relay.admin.pubkeys</code> and set <code>relay.auth.serviceUrl</code> in strfry.conf. The relay picks up the change without a restart. Then reload this page.</p>
+</div>
+
+<div id="signin" class="signin" hidden>
+    <div class="identity" data-identity></div>
+    <p class="lede">Sign in with a key listed in <code>relay.admin.pubkeys</code>. Each change you make here is signed by that key.</p>
+
+    <div class="method">
+        <h2>Browser extension</h2>
+        <p id="nip07-note">Uses a Nostr extension such as Alby or nos2x.</p>
+        <button type="button" class="primary" id="nip07-button">Sign in with extension</button>
+    </div>
+
+    <form class="method" id="bunker-form">
+        <h2><label for="bunker-input">Remote signer</label></h2>
+        <p>Paste the bunker link from your signer, or its NIP-05 address.</p>
+        <div class="inline-form">
+            <input id="bunker-input" class="wide" autocomplete="off" spellcheck="false" placeholder="bunker://... or name@domain.com" required>
+            <button type="submit">Connect</button>
+        </div>
+    </form>
+
+    <div class="method">
+        <h2>Signer app</h2>
+        <p>Scan a code with a mobile signer such as Amber.</p>
+        <button type="button" id="nostrconnect-button">Show code</button>
+        <div id="nostrconnect" hidden>
+            <div class="qr" id="nostrconnect-qr"></div>
+            <div class="inline-form">
+                <button type="button" id="nostrconnect-copy">Copy link</button>
+                <button type="button" class="quiet" id="nostrconnect-cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <p class="status" id="signin-status" role="status"></p>
+</div>
+
+<div id="console" hidden>
+    <header class="topbar">
+        <div class="topbar-inner">
+            <div class="topbar-head">
+                <div class="identity" data-identity></div>
+                <div class="account">
+                    <span class="signing" id="signing" hidden>Approve in your signer</span>
+                    <span class="mono" id="account-npub"></span>
+                    <button type="button" class="quiet" id="signout">Sign out</button>
+                </div>
+            </div>
+            <nav role="tablist" aria-label="Sections">
+                <button type="button" role="tab" id="tab-overview" aria-controls="view-overview" data-tab="overview">Overview</button>
+                <button type="button" role="tab" id="tab-moderation" aria-controls="view-moderation" data-tab="moderation">Moderation<span class="count" id="queue-count" hidden></span></button>
+                <button type="button" role="tab" id="tab-access" aria-controls="view-access" data-tab="access">Access</button>
+                <button type="button" role="tab" id="tab-info" aria-controls="view-info" data-tab="info">Relay info</button>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <div class="banner" id="error" role="alert" hidden>
+            <p id="error-text"></p>
+            <button type="button" class="quiet" id="error-close">Dismiss</button>
+        </div>
+
+        <div role="tabpanel" id="view-overview" aria-labelledby="tab-overview" hidden>
+            <section class="panel">
+                <div class="panel-head">
+                    <h2>Activity</h2>
+                    <button type="button" class="quiet" id="overview-refresh">Refresh</button>
+                </div>
+                <div id="overview-stats"><p class="empty">Loading</p></div>
+            </section>
+            <section class="panel">
+                <h2>Stored events by kind</h2>
+                <div id="overview-kinds"></div>
+            </section>
+        </div>
+
+        <div role="tabpanel" id="view-moderation" aria-labelledby="tab-moderation" hidden>
+            <section class="panel">
+                <h2>Reported events</h2>
+                <p class="explain">Events stored here that someone reported (NIP-56). Keep one to take it off this list, or ban it to delete it.</p>
+                <div id="queue"></div>
+            </section>
+
+            <section class="panel">
+                <h2>Banned pubkeys</h2>
+                <p class="explain">Banning a pubkey deletes every event it published here and refuses new ones. Its requests to vanish (NIP-62) are still honored.</p>
+                <form class="inline-form" id="ban-pubkey-form">
+                    <input name="pubkey" class="wide mono" autocomplete="off" spellcheck="false" placeholder="npub or hex pubkey" aria-label="Pubkey to ban" required>
+                    <input name="reason" autocomplete="off" placeholder="Reason (optional)" aria-label="Reason">
+                    <button type="submit" class="danger">Ban pubkey</button>
+                </form>
+                <div id="banned-pubkeys"></div>
+            </section>
+
+            <section class="panel">
+                <h2>Banned events</h2>
+                <p class="explain">A banned event is deleted and refused if anyone publishes it again.</p>
+                <form class="inline-form" id="ban-event-form">
+                    <input name="id" class="wide mono" autocomplete="off" spellcheck="false" placeholder="note, nevent or hex event id" aria-label="Event to ban" required>
+                    <input name="reason" autocomplete="off" placeholder="Reason (optional)" aria-label="Reason">
+                    <button type="submit" class="danger">Ban event</button>
+                </form>
+                <div id="banned-events"></div>
+            </section>
+
+            <section class="panel">
+                <h2>Kept events</h2>
+                <p class="explain">Reported events you chose to keep. They are also accepted from authors who could not publish otherwise.</p>
+                <div id="kept-events"></div>
+            </section>
+        </div>
+
+        <div role="tabpanel" id="view-access" aria-labelledby="tab-access" hidden>
+            <section class="panel">
+                <h2>Who can publish</h2>
+                <div id="allow-state"></div>
+                <form class="inline-form" id="allow-pubkey-form">
+                    <input name="pubkey" class="wide mono" autocomplete="off" spellcheck="false" placeholder="npub or hex pubkey" aria-label="Pubkey to allow" required>
+                    <input name="reason" autocomplete="off" placeholder="Note (optional)" aria-label="Note">
+                    <button type="submit" class="allow">Allow pubkey</button>
+                </form>
+                <div id="allowed-pubkeys"></div>
+            </section>
+
+            <section class="panel">
+                <h2>Kinds</h2>
+                <p class="explain">Requests to vanish (kind 62) are always accepted.</p>
+
+                <h3>Only accept these kinds</h3>
+                <div id="allowed-kinds"></div>
+                <form class="inline-form" id="allow-kind-form">
+                    <input name="kind" class="narrow" type="number" min="0" step="1" inputmode="numeric" placeholder="Kind number" aria-label="Kind to accept" required>
+                    <button type="submit">Add</button>
+                </form>
+
+                <h3>Refuse these kinds</h3>
+                <div id="disallowed-kinds"></div>
+                <form class="inline-form" id="disallow-kind-form">
+                    <input name="kind" class="narrow" type="number" min="0" step="1" inputmode="numeric" placeholder="Kind number" aria-label="Kind to refuse" required>
+                    <button type="submit">Add</button>
+                </form>
+            </section>
+
+            <section class="panel">
+                <h2>Blocked IP addresses</h2>
+                <p class="explain">A blocked address is disconnected at once and can no longer open a connection.</p>
+                <form class="inline-form" id="block-ip-form">
+                    <input name="ip" class="wide mono" autocomplete="off" spellcheck="false" placeholder="IPv4 or IPv6 address" aria-label="IP address to block" required>
+                    <input name="reason" autocomplete="off" placeholder="Reason (optional)" aria-label="Reason">
+                    <button type="submit" class="danger">Block address</button>
+                </form>
+                <div id="blocked-ips"></div>
+            </section>
+        </div>
+
+        <div role="tabpanel" id="view-info" aria-labelledby="tab-info" hidden>
+            <section class="panel">
+                <h2>Relay info</h2>
+                <p class="explain">What clients see in the relay's NIP-11 document and on its home page. Leave a field empty to use the value from strfry.conf.</p>
+                <form id="info-form">
+                    <div class="field">
+                        <label for="info-name">Name</label>
+                        <input id="info-name" name="name" autocomplete="off" maxlength="200">
+                    </div>
+                    <div class="field">
+                        <label for="info-description">Description</label>
+                        <textarea id="info-description" name="description"></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="info-icon">Icon URL</label>
+                        <input id="info-icon" name="icon" type="url" autocomplete="off" placeholder="https://">
+                        <img class="icon-preview" id="info-icon-preview" alt="" hidden>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="primary">Save changes</button>
+                        <span class="muted" id="info-status" role="status"></span>
+                    </div>
+                </form>
+            </section>
+        </div>
+    </main>
+</div>
+
+<script type="module">
+    import(location.pathname.replace(/\/?$/, "/") + "app.js");
+</script>
+</body>
+</html>

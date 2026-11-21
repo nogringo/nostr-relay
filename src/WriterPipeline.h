@@ -110,7 +110,7 @@ struct WriterPipeline {
                 bool isVerbose = verboseCommit();
                 auto newEvents = writerInbox.pop_all();
 
-                uint64_t written = 0, dups = 0, replaced = 0, deleted = 0;
+                uint64_t written = 0, dups = 0, replaced = 0, deleted = 0, blocked = 0;
 
                 // Collect a certain amount of records in a batch, push the rest back into the writerInbox
                 // Pre-filter out dups in a read-only txn as an optimisation
@@ -169,13 +169,16 @@ struct WriterPipeline {
                         } else if (ev.status == EventWriteStatus::Deleted) {
                             deleted++;
                             totalDeleted++;
+                        } else if (ev.status == EventWriteStatus::Blocked) {
+                            blocked++;
+                            totalRejected++;
                         }
                     }
 
                     if (onCommit) onCommit(written);
                 }
 
-                if (isVerbose) LI << "Writer: added: " << written << " dups: " << dups << " replaced: " << replaced << " deleted: " << deleted;
+                if (isVerbose) LI << "Writer: added: " << written << " dups: " << dups << " replaced: " << replaced << " deleted: " << deleted << " blocked: " << blocked;
 
                 if (shutdownComplete) {
                     flushInbox.push_move(true);

@@ -114,6 +114,9 @@ void RelayServer::runWriter(ThreadPool<MsgWriter>::Thread &thr) {
             } else if (newEvent.status == EventWriteStatus::Deleted) {
                 message = "deleted: user requested deletion";
                 PrometheusMetrics::getInstance().rejectedEventsTotal.inc();
+            } else if (newEvent.status == EventWriteStatus::Blocked) {
+                message = newEvent.blockedReason;
+                PrometheusMetrics::getInstance().rejectedEventsTotal.inc();
             }
 
             if (newEvent.status != EventWriteStatus::Written) {

@@ -28,7 +28,12 @@ INCS += -Iexternal/negentropy/cpp
 build/StrfryTemplates.h: $(shell find src/tmpls/ -type f -name '*.tmpl')
 	PERL5LIB=golpe/vendor/ perl golpe/external/templar/templar.pl src/tmpls/ strfrytmpl $@
 
-src/apps/relay/RelayWebsocket.o: build/StrfryTemplates.h
+ADMIN_ASSETS := adminAssetIndexHtml=admin/index.html adminAssetAppJs=admin/app.js adminAssetNostrJs=admin/dist/nostr.js
+
+build/AdminAssets.h: scripts/embed-admin-assets.pl admin/index.html admin/app.js admin/dist/nostr.js
+	perl scripts/embed-admin-assets.pl $@ $(ADMIN_ASSETS)
+
+src/apps/relay/RelayWebsocket.o: build/StrfryTemplates.h build/AdminAssets.h
 
 .PHONY: test-subid
 test-subid: build/subid_tests

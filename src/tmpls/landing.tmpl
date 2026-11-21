@@ -124,14 +124,14 @@
                 <th colspan="2">Relay</th>
             </tr>
 
-            <tr> ?(cfg().relay__info__name.size())
+            <tr> ?(ctx.info.name.size())
                 <td>Name</td>
-                <td>$(cfg().relay__info__name)</td>
+                <td>$(ctx.info.name)</td>
             </tr>
 
-            <tr> ?(cfg().relay__info__description.size())
+            <tr> ?(ctx.info.description.size())
                 <td>Description</td>
-                <td>$(cfg().relay__info__description)</td>
+                <td>$(ctx.info.description)</td>
             </tr>
 
             <tr> ?(cfg().relay__info__pubkey.size())
@@ -149,9 +149,9 @@
                 <td>$!(ctx.maybeUrl(cfg().relay__info__contact))</td>
             </tr>
 
-            <tr> ?(cfg().relay__info__icon.size())
+            <tr> ?(ctx.info.icon.size())
                 <td>Icon</td>
-                <td>$!(ctx.maybeUrl(cfg().relay__info__icon))</td>
+                <td>$!(ctx.maybeUrl(ctx.info.icon))</td>
             </tr>
 
             <tr> ?(cfg().relay__info__banner.size())

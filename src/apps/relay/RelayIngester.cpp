@@ -99,8 +99,12 @@ void RelayServer::runIngester(ThreadPool<MsgIngester>::Thread &thr) {
             } else if (auto msg = std::get_if<MsgIngester::CloseConn>(&newMsg.msg)) {
                 auto connId = msg->connId;
 
-                PrometheusMetrics::getInstance().authenticatedConnections.dec();
-                rsctx.connIdToAuthSession.erase(connId);
+                auto it = rsctx.connIdToAuthSession.find(connId);
+
+                if (it != rsctx.connIdToAuthSession.end()) {
+                    if (it->second.isAuthed()) PrometheusMetrics::getInstance().authenticatedConnections.dec();
+                    rsctx.connIdToAuthSession.erase(it);
+                }
 
                 tpWriter.dispatch(connId, MsgWriter{MsgWriter::CloseConn{connId}});
                 tpReqWorker.dispatch(connId, MsgReqWorker{MsgReqWorker::CloseConn{connId}});

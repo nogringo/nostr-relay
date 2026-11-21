@@ -1,0 +1,15 @@
+{
+  "name": "strfry-admin",
+  "private": true,
+  "type": "module",
+  "description": "Bundles the Nostr libraries used by the relay's /admin page into dist/nostr.js",
+  "scripts": {
+    "build": "esbuild nostr.js --bundle --minify --format=esm --target=es2020 --legal-comments=eof --outfile=dist/nostr.js"
+  },
+  "devDependencies": {
+    "@noble/hashes": "2.0.1",
+    "esbuild": "0.28.2",
+    "nostr-tools": "2.26.0",
+    "uqr": "0.1.3"
+  }
+}
