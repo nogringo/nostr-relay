@@ -28,6 +28,10 @@ inline bool isEphemeralKind(uint64_t kind) {
     );
 }
 
+inline bool isGiftWrapKind(uint64_t kind) {
+    return kind == 1059 || kind == 21059;
+}
+
 
 inline std::tuple<uint64_t, std::string, std::string> parseATag(std::string_view input) {
     size_t firstColon = input.find(':');

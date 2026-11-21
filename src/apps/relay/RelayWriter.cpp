@@ -43,7 +43,10 @@ void RelayServer::runWriter(ThreadPool<MsgWriter>::Thread &thr) {
                 std::string okMsg;
                 const std::string &plugin = cfg().relay__writePolicy__plugin;
 
-                auto res = writePolicyPlugin.acceptEvent(plugin, plugin.empty() ? tao::json::empty_object : tao::json::from_string(msg->jsonStr), sourceType, msg->ipAddr, msg->authed, okMsg);
+                // NIP-62: relays that restrict who can post MUST still honor a request to vanish
+                auto res = PackedEventView(msg->packedStr).kind() == 62
+                    ? PluginEventSifterResult::Accept
+                    : writePolicyPlugin.acceptEvent(plugin, plugin.empty() ? tao::json::empty_object : tao::json::from_string(msg->jsonStr), sourceType, msg->ipAddr, msg->authed, okMsg);
 
                 if (res == PluginEventSifterResult::Accept) {
                     newEvents.emplace_back(std::move(msg->packedStr), std::move(msg->jsonStr), msg);

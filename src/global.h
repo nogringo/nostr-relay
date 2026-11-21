@@ -19,5 +19,6 @@ std::string parseIP(const std::string &ip);
 uint64_t getDBVersion(lmdb::txn &txn);
 void exitOnSigPipe();
 void parseCommaSeparatedKinds(std::string_view str, flat_hash_set<uint64_t> &out); 
+std::string normalizeRelayUrl(std::string_view url);
 
 extern lmdb::dbi negentropyDbi;

@@ -65,6 +65,7 @@ This thread is responsible for most DB writes:
 
 * Adding new events to the DB
 * Performing event deletion (NIP-09)
+* Processing requests to vanish (NIP-62)
 * Deleting replaceable events
 
 It is important there is only 1 writer thread: Because LMDB has an exclusive-write lock, multiple writers would imply contention. Additionally, when multiple events queue up, there is work that can be amortised across the batch (and the `fsync`). This serves as a natural counterbalance against high write volumes.

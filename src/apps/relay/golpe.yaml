@@ -19,7 +19,7 @@ config:
     desc: "Enable NIP-42 authentication"
     default: true
   - name: relay__auth__serviceUrl
-    desc: "External relay URL (beginning with wss://). Required in order to validate challenge responses."
+    desc: "External relay URL (beginning with wss://). Required in order to validate challenge responses, and to accept NIP-62 requests to vanish that name this relay (ALL_RELAYS requests are always accepted)."
     default: ""
   - name: relay__auth__restrictedReadKinds
     desc: "Comma-separated list of event kinds that require NIP-42 AUTH to read via REQ/COUNT/NEG-OPEN. Example for DMs: '4,1059'."

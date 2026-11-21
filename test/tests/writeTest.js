@@ -596,4 +596,110 @@ doTest({
   verify: [1],
 });
 
+// ---- NIP-62 REQUEST TO VANISH TESTS ----
+
+const relay = (v) => ["relay", v];
+const thisRelay = relay("wss://relay.test");
+
+doTest({
+  desc: "Vanish deletes the author's events up to its created_at",
+  events: [
+    { content: "hi", kind: 1, created_at: 5000 },
+    { from: 1, content: "other user", kind: 1, created_at: 5001 },
+    { content: "hi", kind: 30000, created_at: 5002, tags: [d("x")] },
+    { content: "", kind: 62, created_at: 6000, tags: [thisRelay] },
+    { content: "later", kind: 1, created_at: 7000 },
+  ],
+  verify: [1, 3, 4],
+});
+
+doTest({
+  desc: "Vanish deletes the author's deletion events",
+  events: [
+    { content: "hi", kind: 1, created_at: 5000 },
+    { content: "", kind: 5, created_at: 5500, tags: [e("EV_0")] },
+    { content: "", kind: 62, created_at: 6000, tags: [thisRelay] },
+  ],
+  verify: [2],
+});
+
+doTest({
+  desc: "Vanish prevents re-broadcast",
+  events: [
+    { content: "hi", kind: 1, created_at: 5000 },
+    { content: "", kind: 62, created_at: 6000, tags: [thisRelay] },
+    { content: "hi", kind: 1, created_at: 5000 },
+    { content: "same second", kind: 1, created_at: 6000 },
+  ],
+  verify: [1],
+});
+
+doTest({
+  desc: "Vanish deletes gift wraps addressed to the pubkey",
+  events: [
+    { from: 2, content: "wrapped", kind: 1059, created_at: 5000, tags: [p(ids[0].pub)] },
+    { from: 2, content: "wrapped", kind: 1059, created_at: 5001, tags: [p(ids[1].pub)] },
+    { content: "", kind: 62, created_at: 6000, tags: [thisRelay] },
+    { from: 2, content: "wrapped", kind: 1059, created_at: 5000, tags: [p(ids[0].pub)] },
+    { from: 2, content: "new dm", kind: 1059, created_at: 7000, tags: [p(ids[0].pub)] },
+  ],
+  verify: [1, 2, 4],
+});
+
+doTest({
+  desc: "Vanish from ALL_RELAYS",
+  events: [
+    { content: "hi", kind: 1, created_at: 5000 },
+    { content: "", kind: 62, created_at: 6000, tags: [relay("ALL_RELAYS")] },
+  ],
+  verify: [1],
+});
+
+doTest({
+  desc: "Vanish relay URL is normalized",
+  events: [
+    { content: "hi", kind: 1, created_at: 5000 },
+    { content: "", kind: 62, created_at: 6000, tags: [relay("WSS://Relay.Test/")] },
+  ],
+  verify: [1],
+});
+
+doTest({
+  desc: "Vanish for another relay is rejected",
+  events: [
+    { content: "hi", kind: 1, created_at: 5000 },
+    { content: "", kind: 62, created_at: 6000, tags: [relay("wss://elsewhere.test")] },
+  ],
+  verify: [0],
+});
+
+doTest({
+  desc: "Vanish without a relay tag is rejected",
+  events: [
+    { content: "hi", kind: 1, created_at: 5000 },
+    { content: "", kind: 62, created_at: 6000 },
+  ],
+  verify: [0],
+});
+
+doTest({
+  desc: "Deletion can't target a vanish request",
+  events: [
+    { content: "", kind: 62, created_at: 6000, tags: [thisRelay] },
+    { content: "", kind: 5, created_at: 7000, tags: [e("EV_0")] },
+    { content: "hi", kind: 1, created_at: 5000 },
+  ],
+  verify: [0, 1],
+});
+
+doTest({
+  desc: "Earlier vanish requests are kept",
+  events: [
+    { content: "first", kind: 62, created_at: 5000, tags: [thisRelay] },
+    { content: "hi", kind: 1, created_at: 5500 },
+    { content: "second", kind: 62, created_at: 6000, tags: [thisRelay] },
+  ],
+  verify: [0, 2],
+});
+
 console.log("All OK");

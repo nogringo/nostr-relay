@@ -269,16 +269,6 @@ void RelayServer::ingesterProcessClose(lmdb::txn &txn, uint64_t connId, const ta
     tpReqWorker.dispatch(connId, MsgReqWorker{MsgReqWorker::RemoveSub{connId, SubId(jsonGetString(arr[1], "CLOSE subscription id was not a string"))}});
 }
 
-static std::string normalizeRelayUrl(std::string_view url) {
-    auto pos = url.find("://");
-    if (pos != std::string_view::npos) url.remove_prefix(pos + 3);
-    pos = url.find_first_of("/?#");
-    if (pos != std::string_view::npos) url = url.substr(0, pos);
-    std::string result(url);
-    std::transform(result.begin(), result.end(), result.begin(), [](unsigned char c){ return std::tolower(c); });
-    return result;
-}
-
 void RelayServer::ingesterProcessAuth(RelayServerCtx &rsctx, uint64_t connId, const tao::json::value &eventJson) {
     if (cfg().relay__auth__serviceUrl.empty()) throw herr("relay needs serviceUrl to be configured before AUTH can work");
 
