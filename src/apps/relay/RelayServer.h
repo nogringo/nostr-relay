@@ -56,11 +56,15 @@ struct MsgIngester : NonCopyable {
         std::string payload;
     };
 
+    struct NewConn {
+        uint64_t connId;
+    };
+
     struct CloseConn {
         uint64_t connId;
     };
 
-    using Var = std::variant<ClientMessage, CloseConn>;
+    using Var = std::variant<ClientMessage, NewConn, CloseConn>;
     Var msg;
     MsgIngester(Var &&msg_) : msg(std::move(msg_)) {}
 };

@@ -271,6 +271,8 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
         ws->setUserData((void*)c);
         connIdToConnection.emplace(connId, c);
 
+        tpIngester.dispatch(connId, MsgIngester{MsgIngester::NewConn{connId}});
+
         bool compEnabled, compSlidingWindow;
         ws->getCompressionState(compEnabled, compSlidingWindow);
         LI << "[" << connId << "] Connect from " << renderIP(c->ipAddr)

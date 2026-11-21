@@ -90,6 +90,12 @@ void RelayServer::runIngester(ThreadPool<MsgIngester>::Thread &thr) {
                 } catch (std::exception &e) {
                     sendNoticeError(msg->connId, std::string("bad msg: ") + e.what());
                 }
+            } else if (auto msg = std::get_if<MsgIngester::NewConn>(&newMsg.msg)) {
+                if (cfg().relay__auth__enabled && cfg().relay__auth__serviceUrl.size()) {
+                    auto challenge = rsctx.challengeGenerator.get();
+                    rsctx.connIdToAuthSession.emplace(msg->connId, challenge);
+                    sendAuthChallenge(msg->connId, challenge);
+                }
             } else if (auto msg = std::get_if<MsgIngester::CloseConn>(&newMsg.msg)) {
                 auto connId = msg->connId;
 

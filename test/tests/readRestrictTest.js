@@ -1,5 +1,7 @@
 import os from "node:os";
 import path from "node:path";
+import { once } from "node:events";
+import WebSocket from "ws";
 import { openWebSocket, WsClient } from "../utils/websocketClient.js";
 import {
   writeConfig,
@@ -24,6 +26,29 @@ let authChallengeString = null;
 const pass = (msg) => console.log(`Pass: ${msg}`);
 
 // pre auth
+async function testChallengeSentOnConnect({ wsUrl }) {
+  const ws = new WebSocket(wsUrl);
+  const client = new WsClient(ws);
+  try {
+    await once(ws, "open");
+    const first = await client.nextMessage();
+    expect(
+      first[0] === "AUTH" && typeof first[1] === "string" && first[1].length > 0,
+      "the first message on a new connection must be an AUTH challenge",
+    );
+
+    client.send(["REQ", "restricted-on-connect", { kinds: [4] }]);
+    const resent = await client.waitFor((m) => m[0] === "AUTH");
+    expect(
+      resent[1] === first[1],
+      "a restricted REQ must resend the challenge sent on connect",
+    );
+  } finally {
+    await client.close();
+  }
+  pass("testChallengeSentOnConnect");
+}
+
 async function testRestrictedReqAndCountRequireAuth({ wsUrl, client }) {
   client.send(["REQ", "restricted-req", { kinds: [4] }]);
   const authReq = await client.waitFor((m) => m[0] === "AUTH");
@@ -332,6 +357,7 @@ async function main() {
     relayPort: relayPort,
     relayDbPath: relayDbDir,
     tests: async ({ wsUrl, client }) => {
+      await testChallengeSentOnConnect({ wsUrl });
       await testRestrictedReqAndCountRequireAuth({ wsUrl, client });
       await testCountUnrestrictedAllowed({ wsUrl, client });
       await testReqWorkerFiltersRestrictedInitialScan({ wsUrl, client });
