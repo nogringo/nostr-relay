@@ -147,6 +147,8 @@ This thread answers the [NIP-86](https://github.com/nostr-protocol/nips/blob/mas
 
 Bans, allow lists and NIP-11 overrides live in LMDB tables. The writer checks them inside its write transaction, so a ban can't race with an insert, and so do `strfry import`, `stream`, `sync` and `router`.
 
+A backup is streamed by two short-lived threads. One runs the same compacting copy as `strfry compact` into a pipe, the other reads the pipe and hands 1 MiB chunks to the websocket thread, waiting whenever more than 8 MiB has not reached the socket yet. A slow download therefore slows the copy down instead of buffering the database in memory.
+
 ## Cron
 
 This thread is responsible for periodic maintenance operations. Currently this consists of applying a retention-policy, deleting ephemeral events, and deleting banned events that could not be deleted at once because they were the most recent ones stored.

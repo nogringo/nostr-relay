@@ -3,6 +3,9 @@
 #include <iostream>
 #include <memory>
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 
 #include <hoytech/time.h>
 #include <hoytech/hex.h>
@@ -53,7 +56,22 @@ struct MsgWebsocket : NonCopyable {
         std::string ipAddr;
     };
 
-    using Var = std::variant<Send, SendBinary, SendEventToBatch, GracefulShutdown, HttpReply, CloseIP>;
+    struct AllowBackup {
+        std::string token;
+    };
+
+    struct BackupChunk {
+        uint64_t backupId;
+        std::string data;
+    };
+
+    struct BackupDone {
+        uint64_t backupId;
+        bool ok;
+        uint64_t size;
+    };
+
+    using Var = std::variant<Send, SendBinary, SendEventToBatch, GracefulShutdown, HttpReply, CloseIP, AllowBackup, BackupChunk, BackupDone>;
     Var msg;
     MsgWebsocket(Var &&msg_) : msg(std::move(msg_)) {}
 };
@@ -197,6 +215,8 @@ inline std::string httpResponse(int status, std::string_view contentType, std::s
         status == 204 ? "No Content" :
         status == 400 ? "Bad Request" :
         status == 401 ? "Unauthorized" :
+        status == 403 ? "Forbidden" :
+        status == 409 ? "Conflict" :
         status == 413 ? "Payload Too Large" :
         "Error";
 
@@ -212,6 +232,14 @@ inline std::string httpResponse(int status, std::string_view contentType, std::s
     return output;
 }
 
+// Flow control between the thread that reads a backup and the websocket thread that sends it
+struct BackupStream {
+    std::mutex mutex;
+    std::condition_variable cv;
+    uint64_t inFlight = 0; // bytes handed to uWS and not yet sent
+    bool cancelled = false;
+};
+
 struct RelayServerCtx {
     secp256k1_context *secpCtx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
     FilterValidator filterValidator;
@@ -222,6 +250,7 @@ struct RelayServerCtx {
 struct RelayServer {
     uS::Async *hubTrigger = nullptr;
     uint64_t startedAt = hoytech::curr_time_s();
+    std::atomic<bool> backupRunning = false;
 
     // Thread Pools
 
@@ -260,6 +289,8 @@ struct RelayServer {
     tao::json::value adminMethod(Decompressor &decomp, const std::string &method, const tao::json::value::array_t &params);
     tao::json::value eventsNeedingModeration(Decompressor &decomp);
     tao::json::value stats();
+
+    void streamBackup(uint64_t backupId, std::shared_ptr<BackupStream> stream);
 
     void runCron();
 

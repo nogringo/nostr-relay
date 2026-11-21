@@ -29,6 +29,36 @@ static bool isNip86ContentType(std::string_view contentType) {
     return lower.starts_with("application/nostr+json+rpc");
 }
 
+// Without URL decoding: only used for tokens made of letters and digits
+static std::string queryParam(std::string_view url, std::string_view name) {
+    auto start = url.find('?');
+    if (start == std::string_view::npos) return "";
+
+    auto query = url.substr(start + 1);
+
+    while (query.size()) {
+        auto end = query.find('&');
+        auto pair = query.substr(0, end);
+        auto eq = pair.find('=');
+
+        if (eq != std::string_view::npos && pair.substr(0, eq) == name) return std::string(pair.substr(eq + 1));
+        if (end == std::string_view::npos) break;
+
+        query.remove_prefix(end + 1);
+    }
+
+    return "";
+}
+
+static std::string backupFilename() {
+    char filename[64];
+    time_t now = ::time(nullptr);
+    struct tm tm;
+    gmtime_r(&now, &tm);
+    strftime(filename, sizeof(filename), "strfry-backup-%Y%m%d-%H%M%S.mdb", &tm);
+    return filename;
+}
+
 struct RelayInfo {
     std::string name;
     std::string description;
@@ -50,6 +80,7 @@ static RelayInfo currentRelayInfo() {
 }
 
 static constexpr size_t MAX_RPC_BODY_SIZE = 65536;
+static constexpr uint64_t BACKUP_LINK_LIFETIME_SECONDS = 60;
 
 
 
@@ -92,6 +123,15 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
 
     flat_hash_map<uint64_t, uWS::HttpResponse*> pendingRpcs;
     uint64_t nextRpcId = 1;
+
+    struct BackupDownload {
+        uWS::HttpResponse *res;
+        std::shared_ptr<BackupStream> stream;
+    };
+
+    flat_hash_map<std::string, uint64_t> backupTokens; // token -> expiry
+    flat_hash_map<uint64_t, BackupDownload> backupDownloads;
+    uint64_t nextBackupId = 1;
 
     std::string tempBuf;
     tempBuf.reserve(cfg().events__maxEventSize + MAX_SUBID_SIZE + 100);
@@ -330,6 +370,117 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
         tpAdmin.dispatch(0, MsgAdmin{MsgAdmin::Rpc{rpc->reqId, std::move(rpc->authorization), std::move(rpc->body)}});
     };
 
+    auto startBackupDownload = [&](uWS::HttpResponse *res, const std::string &token) {
+        auto refuse = [&](int status, std::string_view message) {
+            auto response = httpResponse(status, "text/plain; charset=utf-8", message, adminHeaders);
+            res->write(response.data(), response.size());
+        };
+
+        uint64_t now = hoytech::curr_time_s();
+
+        for (auto it = backupTokens.begin(); it != backupTokens.end(); ) {
+            if (it->second < now) it = backupTokens.erase(it);
+            else ++it;
+        }
+
+        if (!backupTokens.erase(token)) return refuse(403, "This backup link is invalid or has expired.\n");
+
+        bool idle = false;
+        if (!backupRunning.compare_exchange_strong(idle, true)) return refuse(409, "A backup is already running.\n");
+
+        uint64_t backupId = nextBackupId++;
+        auto stream = std::make_shared<BackupStream>();
+        backupDownloads.emplace(backupId, BackupDownload{res, stream});
+
+        // Chunked, so a download cut short by a failure shows as failed instead of as a truncated file
+        std::string head =
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/octet-stream\r\n"
+            "Content-Disposition: attachment; filename=\"" + backupFilename() + "\"\r\n"
+            "Transfer-Encoding: chunked\r\n"
+            "Connection: keep-alive\r\n"
+            "Server: strfry\r\n"
+            "Cache-Control: no-store\r\n"
+            "X-Content-Type-Options: nosniff\r\n"
+            "\r\n";
+
+        res->write(head.data(), head.size());
+
+        LI << "Backup download started";
+        streamBackup(backupId, stream);
+    };
+
+    auto sendBackupChunk = [&](uint64_t backupId, const std::string &data) {
+        auto it = backupDownloads.find(backupId);
+        if (it == backupDownloads.end()) return;
+
+        struct ChunkSent {
+            std::shared_ptr<BackupStream> stream;
+            size_t size;
+        };
+
+        char sizeLine[32];
+        int sizeLineLen = snprintf(sizeLine, sizeof(sizeLine), "%zx\r\n", data.size());
+
+        std::string framed;
+        framed.reserve(sizeLineLen + data.size() + 2);
+        framed.append(sizeLine, sizeLineLen);
+        framed += data;
+        framed += "\r\n";
+
+        // uWS calls this once the chunk is written to the socket, or when the socket closes
+        auto onSent = [](void *, void *data, bool, void *){
+            auto *sent = static_cast<ChunkSent*>(data);
+
+            {
+                std::lock_guard lock(sent->stream->mutex);
+                sent->stream->inFlight -= sent->size;
+            }
+
+            sent->stream->cv.notify_all();
+            delete sent;
+        };
+
+        it->second.res->write(framed.data(), framed.size(), onSent, new ChunkSent{it->second.stream, data.size()});
+    };
+
+    auto finishBackupDownload = [&](uint64_t backupId, bool ok, uint64_t size) {
+        auto it = backupDownloads.find(backupId);
+        if (it == backupDownloads.end()) return;
+
+        auto *res = it->second.res;
+        backupDownloads.erase(it);
+
+        if (ok) {
+            res->write("0\r\n\r\n", 5);
+            LI << "Backup download finished: " << renderSize(size);
+        } else {
+            LW << "Backup failed after " << renderSize(size) << ", closing the download";
+            res->getHttpSocket()->terminate();
+        }
+    };
+
+    auto cancelBackupDownload = [&](uWS::HttpResponse *res) {
+        for (auto it = backupDownloads.begin(); it != backupDownloads.end(); ++it) {
+            if (it->second.res != res) continue;
+
+            auto stream = it->second.stream;
+
+            {
+                std::lock_guard lock(stream->mutex);
+                stream->cancelled = true;
+            }
+
+            stream->cv.notify_all();
+            backupDownloads.erase(it);
+
+            LI << "Backup download cancelled by the client";
+            return true;
+        }
+
+        return false;
+    };
+
 
     {
         int extensionOptions = 0;
@@ -359,6 +510,8 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
         } else if (path == "/admin" || path == "/admin/") {
             auto page = getAdminPageHttpResponse();
             res->write(page.data(), page.size());
+        } else if (path == "/admin/backup") {
+            startBackupDownload(res, queryParam(url, "token"));
         } else if (path == "/admin/app.js") {
             res->write(adminAppResponse.data(), adminAppResponse.size());
         } else if (path == "/admin/nostr.js") {
@@ -389,6 +542,8 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
     });
 
     hubGroup->onCancelledHttpRequest([&](uWS::HttpResponse *res){
+        if (cancelBackupDownload(res)) return;
+
         auto *rpc = (PendingRpc*)res->getUserData();
         if (!rpc) return;
 
@@ -571,6 +726,12 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
                 }
             } else if (auto msg = std::get_if<MsgWebsocket::HttpReply>(&newMsg.msg)) {
                 replyRpc(msg->reqId, msg->payload);
+            } else if (auto msg = std::get_if<MsgWebsocket::AllowBackup>(&newMsg.msg)) {
+                backupTokens[msg->token] = hoytech::curr_time_s() + BACKUP_LINK_LIFETIME_SECONDS;
+            } else if (auto msg = std::get_if<MsgWebsocket::BackupChunk>(&newMsg.msg)) {
+                sendBackupChunk(msg->backupId, msg->data);
+            } else if (auto msg = std::get_if<MsgWebsocket::BackupDone>(&newMsg.msg)) {
+                finishBackupDownload(msg->backupId, msg->ok, msg->size);
             } else if (auto msg = std::get_if<MsgWebsocket::CloseIP>(&newMsg.msg)) {
                 std::vector<uint64_t> connIds;
 

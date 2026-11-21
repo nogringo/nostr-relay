@@ -1,3 +1,4 @@
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -385,6 +386,44 @@ async function importTests(client) {
   pass("strfry import honors the bans");
 }
 
+async function backupTests(client) {
+  const event = sign(alice, { content: "in the backup" });
+  await expectAccepted(client, event, "an event to back up");
+
+  const banned = randomKey();
+  await call("banpubkey", [banned.pub]);
+
+  const { token } = await call("backup");
+  const link = `${httpUrl}admin/backup?token=${token}`;
+  const res = await fetch(link);
+  expect(res.status === 200 && res.headers.get("content-type") === "application/octet-stream", `the backup must download: HTTP ${res.status}`);
+  expect(/^attachment; filename="strfry-backup-\d{8}-\d{6}\.mdb"$/.test(res.headers.get("content-disposition")), "the backup must be named as a dated .mdb file");
+  const snapshot = Buffer.from(await res.arrayBuffer());
+
+  expect((await fetch(link)).status === 403, "a backup link must work only once");
+  expect((await fetch(`${httpUrl}admin/backup?token=nope`)).status === 403, "an unknown backup token must be refused");
+  expect((await fetch(`${httpUrl}admin/backup`)).status === 403, "a backup link without a token must be refused");
+
+  const restoredDbDir = path.join(workDir, "restored-db");
+  const restoredCfgPath = path.join(workDir, "restored.conf");
+  rmSync(restoredDbDir, { recursive: true, force: true });
+  mkdirSync(restoredDbDir, { recursive: true });
+  writeFileSync(path.join(restoredDbDir, "data.mdb"), snapshot);
+  writeConfig(config(restoredDbDir, relayPort, true, admin.pub), restoredCfgPath);
+
+  const fromBanned = buildEvent({ sec: banned.sec, pub: banned.pub, content: "after the restore", created_at: ts++ });
+  const imported = runStrfry(["--config", restoredCfgPath, "import", "--no-verify"], { input: JSON.stringify(fromBanned) + "\n", stdio: ["pipe", "ignore", "pipe"] });
+  expect(imported.status === 0, `import into the restored DB failed: ${imported.stderr}`);
+
+  const exported = runStrfry(["--config", restoredCfgPath, "export"], { stdio: ["ignore", "pipe", "pipe"] });
+  expect(exported.status === 0, `export from the restored DB failed: ${exported.stderr}`);
+  expect(exported.stdout.includes(event.id), "the restored DB must hold the events");
+  expect(!exported.stdout.includes(fromBanned.id), "the restored DB must keep the bans");
+
+  await call("unbanpubkey", [banned.pub]);
+  pass("backup downloads a snapshot that restores the events and the bans");
+}
+
 async function tests({ wsUrl, client }) {
   await authorizationTests();
   await pubkeyBanTests(client);
@@ -397,6 +436,7 @@ async function tests({ wsUrl, client }) {
   await statsTests();
   await adminPageTests();
   await importTests(client);
+  await backupTests(client);
   await ipTests(wsUrl, client);
 }
 

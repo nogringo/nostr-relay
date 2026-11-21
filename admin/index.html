@@ -594,6 +594,13 @@ section.panel {
                 <h2>Stored events by kind</h2>
                 <div id="overview-kinds"></div>
             </section>
+            <section class="panel">
+                <h2>Backup</h2>
+                <p class="explain">Downloads a snapshot of the whole database: events, bans, allow lists, blocked addresses, relay info and settings. To restore it, stop strfry, put the file in place of <code>data.mdb</code> in the database directory and start strfry again, with the same version.</p>
+                <div class="form-actions">
+                    <button type="button" id="backup-button">Download backup</button>
+                </div>
+            </section>
         </div>
 
         <div role="tabpanel" id="view-moderation" aria-labelledby="tab-moderation" hidden>

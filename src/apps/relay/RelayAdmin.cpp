@@ -19,6 +19,7 @@ static const std::vector<std::string> supportedMethods = {
     "blockip", "unblockip", "listblockedips",
     "settings", "changesetting",
     "stats",
+    "backup",
 };
 
 static std::string toLower(std::string_view s) {
@@ -403,6 +404,19 @@ tao::json::value RelayServer::adminMethod(Decompressor &decomp, const std::strin
     }
 
     if (method == "stats") return stats();
+
+    // The token opens /admin/backup once, so a browser can download the file without an Authorization header
+    if (method == "backup") {
+        if (backupRunning) throw herr("a backup is already running");
+
+        static SessionToken::Generator tokenGenerator;
+        auto token = tokenGenerator.get();
+
+        tpWebsocket.dispatch(0, MsgWebsocket{MsgWebsocket::AllowBackup{token}});
+        hubTrigger->send();
+
+        return tao::json::value({{ "token", token }});
+    }
 
     throw herr("unsupported method: ", method);
 }

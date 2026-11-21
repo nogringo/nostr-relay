@@ -707,6 +707,17 @@ $("overview-refresh").addEventListener("click", (event) =>
   busy(event.currentTarget, loadOverview),
 );
 
+// A link instead of fetch(), so the browser streams the file to disk instead of holding it in memory
+$("backup-button").addEventListener("click", (event) =>
+  busy(event.currentTarget, async () => {
+    const { token } = await rpc("backup");
+    const link = h("a", { href: `${httpEndpoint}admin/backup?token=${encodeURIComponent(token)}`, download: true, hidden: true });
+    document.body.append(link);
+    link.click();
+    link.remove();
+  }),
+);
+
 // Moderation
 
 function setQueueCount(n) {
