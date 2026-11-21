@@ -38,7 +38,7 @@ async function testRestrictedReqAndCountRequireAuth({ wsUrl, client }) {
     (m) => m[0] === "CLOSED" && m[1] === "restricted-req",
   );
   expect(
-    String(closedReq[2]).includes("auth-required"),
+    String(closedReq[2]).startsWith("auth-required:"),
     "REQ must be closed with auth-required",
   );
 
@@ -48,7 +48,7 @@ async function testRestrictedReqAndCountRequireAuth({ wsUrl, client }) {
     (m) => m[0] === "CLOSED" && m[1] === "restricted-count",
   );
   expect(
-    String(closedCount[2]).includes("auth-required"),
+    String(closedCount[2]).startsWith("auth-required:"),
     "COUNT must be closed with auth-required",
   );
   pass("testRestrictedReqAndCountRequireAuth");
@@ -294,7 +294,7 @@ async function testCountFailsWhenFilterNotFullyScopedIfInvolvedRequired({
 
   const msg = await client.waitFor((m) => m[1] === "failing-count");
 
-  expect(String(msg[2]).includes("count-failed"));
+  expect(String(msg[2]).startsWith("count-failed:"));
 
   pass("testCountFailsWhenFilterNotFullyScopedIfInvolvedRequired");
 }
