@@ -718,6 +718,110 @@ $("backup-button").addEventListener("click", (event) =>
   }),
 );
 
+const IMPORT_BATCH_BYTES = 1 << 20;
+const IMPORT_MAX_BATCH_BYTES = 8 << 20; // MAX_IMPORT_BODY_SIZE in RelayWebsocket.cpp
+
+let importStopped = false;
+
+// Cut on a line break, so no event is split between two requests
+async function readImportBatch(file, start) {
+  for (let size = IMPORT_BATCH_BYTES; ; size *= 2) {
+    const end = Math.min(start + size, file.size);
+    const bytes = new Uint8Array(await file.slice(start, end).arrayBuffer());
+    if (end === file.size) return bytes;
+
+    const cut = bytes.lastIndexOf(10);
+    if (cut !== -1) return bytes.subarray(0, cut + 1);
+    if (size >= IMPORT_MAX_BATCH_BYTES) throw new Error("This file has a line longer than 8 MB. It must hold one event per line (JSONL), like the output of strfry export.");
+  }
+}
+
+async function sendImportBatch(token, bytes) {
+  const res = await fetch(`${httpEndpoint}admin/import`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: bytes });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `The relay answered with HTTP ${res.status}.`);
+  return data;
+}
+
+function renderImport(totals, state) {
+  const refused = Object.entries(totals.refused).sort((a, b) => b[1] - a[1]);
+  const numRefused = refused.reduce((sum, [, n]) => sum + n, 0);
+
+  $("import-status").replaceChildren(
+    h(
+      "p",
+      { class: "facts" },
+      `${state} `,
+      h("strong", {}, formatNumber(totals.added)),
+      " added, ",
+      h("strong", {}, formatNumber(totals.duplicates)),
+      " already stored, ",
+      h("strong", {}, formatNumber(numRefused)),
+      " not stored.",
+    ),
+    refused.length ? h("ul", { class: "reasons" }, refused.map(([reason, n]) => h("li", {}, h("strong", {}, formatNumber(n)), ` ${reason}`))) : null,
+  );
+}
+
+async function importFile(file) {
+  if (!file.size) throw new Error("This file is empty.");
+
+  const totals = { added: 0, duplicates: 0, refused: {} };
+  const progress = $("import-progress");
+  let done = 0;
+  let state = "Done:";
+  const stoppedAt = () => `Stopped at ${Math.floor((done / file.size) * 100)}%:`;
+
+  importStopped = false;
+  $("import-file").disabled = true;
+  $("import-stop").disabled = false;
+  $("import-stop").hidden = false;
+  $("import-status").replaceChildren();
+  progress.value = 0;
+  progress.hidden = false;
+
+  try {
+    const { token } = await rpc("import");
+
+    while (done < file.size) {
+      if (importStopped) {
+        state = stoppedAt();
+        break;
+      }
+
+      const bytes = await readImportBatch(file, done);
+      const result = await sendImportBatch(token, bytes);
+      done += bytes.length;
+
+      totals.added += result.added;
+      totals.duplicates += result.duplicates;
+      for (const [reason, n] of Object.entries(result.refused)) totals.refused[reason] = (totals.refused[reason] ?? 0) + n;
+
+      progress.value = done / file.size;
+      renderImport(totals, `Importing, ${Math.floor(progress.value * 100)}%:`);
+    }
+  } catch (error) {
+    state = stoppedAt();
+    throw error;
+  } finally {
+    $("import-file").disabled = false;
+    $("import-stop").hidden = true;
+    progress.hidden = true;
+
+    if (done) {
+      renderImport(totals, state);
+      busy(null, loadOverview);
+    }
+  }
+}
+
+onSubmit("import-form", ({ file }) => importFile(file));
+
+$("import-stop").addEventListener("click", (event) => {
+  importStopped = true;
+  event.currentTarget.disabled = true;
+});
+
 // Moderation
 
 function setQueueCount(n) {

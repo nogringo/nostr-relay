@@ -80,6 +80,7 @@ static RelayInfo currentRelayInfo() {
 }
 
 static constexpr size_t MAX_RPC_BODY_SIZE = 65536;
+static constexpr size_t MAX_IMPORT_BODY_SIZE = 8 << 20;
 static constexpr uint64_t BACKUP_LINK_LIFETIME_SECONDS = 60;
 
 
@@ -117,6 +118,7 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
     struct PendingRpc {
         uint64_t reqId;
         std::string authorization;
+        bool isImport = false;
         std::string body;
         bool tooLarge = false;
     };
@@ -351,23 +353,27 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
         pendingRpcs.erase(it);
 
         res->write(payload.data(), payload.size());
+
+        // uWS leaves the socket corked when a body spans several reads, which holds the reply back (5 s on macOS)
+        res->getHttpSocket()->cork(false);
     };
 
     auto receiveRpcBody = [&](uWS::HttpResponse *res, char *data, size_t length, size_t remainingBytes) {
         auto *rpc = (PendingRpc*)res->getUserData();
         if (!rpc) return;
 
-        if (rpc->body.size() + length > MAX_RPC_BODY_SIZE) rpc->tooLarge = true;
+        if (rpc->body.size() + length > (rpc->isImport ? MAX_IMPORT_BODY_SIZE : MAX_RPC_BODY_SIZE)) rpc->tooLarge = true;
         else rpc->body.append(data, length);
 
         if (remainingBytes) return;
 
         if (rpc->tooLarge) {
-            replyRpc(rpc->reqId, httpResponse(413, "application/nostr+json+rpc", "{\"error\":\"request body too large\"}"));
+            replyRpc(rpc->reqId, httpResponse(413, rpc->isImport ? "application/json" : "application/nostr+json+rpc", "{\"error\":\"request body too large\"}"));
             return;
         }
 
-        tpAdmin.dispatch(0, MsgAdmin{MsgAdmin::Rpc{rpc->reqId, std::move(rpc->authorization), std::move(rpc->body)}});
+        if (rpc->isImport) tpAdmin.dispatch(0, MsgAdmin{MsgAdmin::Import{rpc->reqId, std::move(rpc->authorization), std::move(rpc->body)}});
+        else tpAdmin.dispatch(0, MsgAdmin{MsgAdmin::Rpc{rpc->reqId, std::move(rpc->authorization), std::move(rpc->body)}});
     };
 
     auto startBackupDownload = [&](uWS::HttpResponse *res, const std::string &token) {
@@ -502,8 +508,8 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
 
         if (req.getMethod() == uWS::METHOD_OPTIONS) {
             res->write(corsPreflightResponse.data(), corsPreflightResponse.size());
-        } else if (req.getMethod() == uWS::METHOD_POST && isNip86ContentType(httpHeader(req, "content-type"))) {
-            auto *rpc = new PendingRpc{nextRpcId++, std::string(httpHeader(req, "authorization"))};
+        } else if (req.getMethod() == uWS::METHOD_POST && (path == "/admin/import" || isNip86ContentType(httpHeader(req, "content-type")))) {
+            auto *rpc = new PendingRpc{nextRpcId++, std::string(httpHeader(req, "authorization")), path == "/admin/import"};
             res->setUserData(rpc);
             pendingRpcs.emplace(rpc->reqId, res);
             receiveRpcBody(res, data, length, remainingBytes);

@@ -204,7 +204,13 @@ struct MsgAdmin : NonCopyable {
         std::string body;
     };
 
-    using Var = std::variant<Rpc>;
+    struct Import {
+        uint64_t reqId;
+        std::string authorization;
+        std::string body;
+    };
+
+    using Var = std::variant<Rpc, Import>;
     Var msg;
     MsgAdmin(Var &&msg_) : msg(std::move(msg_)) {}
 };
@@ -251,6 +257,7 @@ struct RelayServer {
     uS::Async *hubTrigger = nullptr;
     uint64_t startedAt = hoytech::curr_time_s();
     std::atomic<bool> backupRunning = false;
+    flat_hash_map<std::string, uint64_t> importTokens; // token -> expiry, admin thread only
 
     // Thread Pools
 
@@ -287,6 +294,7 @@ struct RelayServer {
     void runAdmin(ThreadPool<MsgAdmin>::Thread &thr);
     std::string adminRpc(secp256k1_context *secpCtx, Decompressor &decomp, const MsgAdmin::Rpc &rpc);
     tao::json::value adminMethod(Decompressor &decomp, const std::string &method, const tao::json::value::array_t &params);
+    std::string adminImport(secp256k1_context *secpCtx, const MsgAdmin::Import &msg);
     tao::json::value eventsNeedingModeration(Decompressor &decomp);
     tao::json::value stats();
 

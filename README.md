@@ -146,6 +146,7 @@ From the page you can:
 * Block IP addresses. A blocked address is disconnected and can't connect again.
 * Change the name, description and icon shown in NIP-11 and on the landing page.
 * Download a backup of the database, made like `strfry compact` while the relay keeps running. To restore it, stop strfry, put the file in place of `data.mdb` in the DB directory and start the same strfry version again. The download holds an LMDB read transaction, so on a busy relay the DB file can grow while it runs.
+* Import events from a JSONL file, such as the output of `strfry export`. As with `strfry import`, signatures are checked but timestamps are not, the write policy plugin and NIP-70 are skipped, and bans, allow lists and deletions apply.
 
 Bans and lists are stored in the database. They survive restarts, and `strfry import`, `stream`, `sync` and `router` honor them too. A few rules to know:
 
@@ -155,7 +156,7 @@ Bans and lists are stored in the database. They survive restarts, and `strfry im
 * A protected event (NIP-70) is accepted from its author once they authenticate with NIP-42, and a repost that embeds one is refused. When NIP-70 is turned off, the relay ignores the `-` tag: these events are treated like any other, and 70 is dropped from the NIP-11 `supported_nips`. `import`, `stream`, `sync` and `router` never check the tag.
 * When the banned event is the most recent one stored, the cron thread deletes it once a newer event arrives, so its database ID is never reused.
 
-Besides the standard NIP-86 methods, strfry supports `stats`, which returns the numbers shown on the page, `unallowkind` and `undisallowkind`, which take a kind off a list without adding it to the other, and `settings` and `changesetting`, which read and change the relay's settings. The only setting is `nip70`, `true` by default: `changesetting` with `["nip70", false]` makes the relay ignore the `-` tag. `backup` returns a `token` that downloads the backup once from `/admin/backup?token=...`, within 60 seconds. Only one backup runs at a time. The NIP-43 role and claim methods are not supported.
+Besides the standard NIP-86 methods, strfry supports `stats`, which returns the numbers shown on the page, `unallowkind` and `undisallowkind`, which take a kind off a list without adding it to the other, and `settings` and `changesetting`, which read and change the relay's settings. The only setting is `nip70`, `true` by default: `changesetting` with `["nip70", false]` makes the relay ignore the `-` tag. `backup` returns a `token` that downloads the backup once from `/admin/backup?token=...`, within 60 seconds. Only one backup runs at a time. `import` returns a `token` for `POST /admin/import`, sent as `Authorization: Bearer <token>`. Each request carries up to 8 MiB of JSONL and gets back the number of events `added`, the number of `duplicates`, and the `refused` ones counted by reason. The token expires after 5 minutes without a request. The NIP-43 role and claim methods are not supported.
 
 The page's JavaScript dependencies are bundled in `admin/dist/nostr.js`. That file is committed, so building strfry needs no JavaScript tooling. To update the dependencies, run `npm ci && npm run build` in `admin/`.
 

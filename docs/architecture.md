@@ -149,6 +149,8 @@ Bans, allow lists and NIP-11 overrides live in LMDB tables. The writer checks th
 
 A backup is streamed by two short-lived threads. One runs the same compacting copy as `strfry compact` into a pipe, the other reads the pipe and hands 1 MiB chunks to the websocket thread, waiting whenever more than 8 MiB has not reached the socket yet. A slow download therefore slows the copy down instead of buffering the database in memory.
 
+An import from the page arrives as a series of `POST /admin/import` requests, each holding up to 8 MiB of JSONL cut on a line break. The websocket thread hands each one to this thread, which verifies the events, writes them in one transaction and answers with the counts. The browser sends the next batch only once the previous one is stored, so a large file never sits in the relay's memory.
+
 ## Cron
 
 This thread is responsible for periodic maintenance operations. Currently this consists of applying a retention-policy, deleting ephemeral events, and deleting banned events that could not be deleted at once because they were the most recent ones stored.

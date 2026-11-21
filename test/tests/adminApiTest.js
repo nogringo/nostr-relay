@@ -424,6 +424,46 @@ async function backupTests(client) {
   pass("backup downloads a snapshot that restores the events and the bans");
 }
 
+async function importUpload(token, body) {
+  const headers = token === null ? {} : { Authorization: `Bearer ${token}` };
+  const res = await fetch(`${httpUrl}admin/import`, { method: "POST", headers, body });
+  return { status: res.status, ...(await res.json()) };
+}
+
+async function adminImportTests(client) {
+  const banned = randomKey();
+  await call("banpubkey", [banned.pub]);
+
+  const stored = sign(alice, { content: "stored before the import" });
+  await expectAccepted(client, stored, "an event stored before the import");
+
+  const added = sign(alice, { content: "imported from the admin page" });
+  const old = finalizeEvent({ kind: 1, tags: [], content: "older than the relay accepts", created_at: now() - 5 * 365 * 86_400 }, hexToBytes(randomKey().sec));
+  const fromBanned = sign(banned, { content: "from a banned pubkey" });
+  const badSig = buildEvent({ sec: alice.sec, pub: alice.pub, content: "bad signature", created_at: ts++ });
+
+  const { token } = await call("import");
+  const lines = [added, old, stored, fromBanned, badSig].map((e) => JSON.stringify(e));
+  const res = await importUpload(token, [...lines, "", "not json"].join("\n") + "\n");
+  expect(res.status === 200 && res.added === 2 && res.duplicates === 1, `the batch must add 2 events and skip 1: ${JSON.stringify(res)}`);
+  expect(
+    res.refused["blocked: this pubkey is banned"] === 1 && res.refused["invalid: bad signature"] === 1 && res.refused["invalid: not JSON"] === 1,
+    `the batch must count the refused lines by reason: ${JSON.stringify(res)}`,
+  );
+  expect((await isStored(client, added.id)) && (await isStored(client, old.id)), "the imported events must be stored, however old");
+  expect(!(await isStored(client, fromBanned.id)), "the import must honor the bans");
+
+  const again = await importUpload(token, JSON.stringify(added) + "\r\n");
+  expect(again.status === 200 && again.added === 0 && again.duplicates === 1, `the token must work for the next batches: ${JSON.stringify(again)}`);
+
+  expect((await importUpload("nope", "")).status === 401, "an unknown import token must be refused");
+  expect((await importUpload(null, "")).status === 401, "an import without a token must be refused");
+  expect((await importUpload(token, "x".repeat((8 << 20) + 1))).status === 413, "a batch over 8 MiB must be refused");
+
+  await call("unbanpubkey", [banned.pub]);
+  pass("import writes JSONL batches, checks signatures but not dates, and honors the bans");
+}
+
 async function tests({ wsUrl, client }) {
   await authorizationTests();
   await pubkeyBanTests(client);
@@ -437,6 +477,7 @@ async function tests({ wsUrl, client }) {
   await adminPageTests();
   await importTests(client);
   await backupTests(client);
+  await adminImportTests(client);
   await ipTests(wsUrl, client);
 }
 

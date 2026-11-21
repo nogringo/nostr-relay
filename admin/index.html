@@ -390,6 +390,17 @@ section.panel {
 
 .footnote { margin-top: 16px; font-size: 13px; color: var(--ink-3); }
 
+progress {
+    display: block;
+    width: 100%;
+    margin-top: 16px;
+    accent-color: var(--bar);
+}
+
+.reasons { margin-top: 8px; color: var(--ink-2); }
+.reasons li { overflow-wrap: anywhere; }
+.reasons strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+
 /* Lists */
 
 .rows { margin-top: 12px; }
@@ -600,6 +611,17 @@ section.panel {
                 <div class="form-actions">
                     <button type="button" id="backup-button">Download backup</button>
                 </div>
+            </section>
+            <section class="panel">
+                <h2>Import events</h2>
+                <p class="explain">Adds the events of a JSONL file, one event per line, such as the output of <code>strfry export</code>. Signatures are checked, dates are not. Bans, allow lists and deletions apply as usual. The write policy plugin and NIP-70 are skipped.</p>
+                <form class="inline-form" id="import-form">
+                    <input type="file" name="file" id="import-file" class="wide" aria-label="JSONL file to import" required>
+                    <button type="submit">Import</button>
+                    <button type="button" class="quiet" id="import-stop" hidden>Stop</button>
+                </form>
+                <progress id="import-progress" max="1" value="0" hidden></progress>
+                <div id="import-status" role="status"></div>
             </section>
         </div>
 

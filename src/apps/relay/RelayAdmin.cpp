@@ -20,7 +20,19 @@ static const std::vector<std::string> supportedMethods = {
     "settings", "changesetting",
     "stats",
     "backup",
+    "import",
 };
+
+static constexpr uint64_t IMPORT_TOKEN_IDLE_SECONDS = 300;
+
+static SessionToken::Generator tokenGenerator;
+
+static void forgetExpiredTokens(flat_hash_map<std::string, uint64_t> &tokens, uint64_t now) {
+    for (auto it = tokens.begin(); it != tokens.end(); ) {
+        if (it->second < now) it = tokens.erase(it);
+        else ++it;
+    }
+}
 
 static std::string toLower(std::string_view s) {
     std::string out(s);
@@ -127,6 +139,10 @@ void RelayServer::runAdmin(ThreadPool<MsgAdmin>::Thread &thr) {
         for (auto &newMsg : newMsgs) {
             if (auto msg = std::get_if<MsgAdmin::Rpc>(&newMsg.msg)) {
                 auto reply = adminRpc(secpCtx, decomp, *msg);
+                tpWebsocket.dispatch(0, MsgWebsocket{MsgWebsocket::HttpReply{msg->reqId, std::move(reply)}});
+                hubTrigger->send();
+            } else if (auto msg = std::get_if<MsgAdmin::Import>(&newMsg.msg)) {
+                auto reply = adminImport(secpCtx, *msg);
                 tpWebsocket.dispatch(0, MsgWebsocket{MsgWebsocket::HttpReply{msg->reqId, std::move(reply)}});
                 hubTrigger->send();
             }
@@ -409,7 +425,6 @@ tao::json::value RelayServer::adminMethod(Decompressor &decomp, const std::strin
     if (method == "backup") {
         if (backupRunning) throw herr("a backup is already running");
 
-        static SessionToken::Generator tokenGenerator;
         auto token = tokenGenerator.get();
 
         tpWebsocket.dispatch(0, MsgWebsocket{MsgWebsocket::AllowBackup{token}});
@@ -418,7 +433,104 @@ tao::json::value RelayServer::adminMethod(Decompressor &decomp, const std::strin
         return tao::json::value({{ "token", token }});
     }
 
+    // One signature for the whole file: the token then authorizes each batch sent to /admin/import
+    if (method == "import") {
+        uint64_t now = hoytech::curr_time_s();
+        forgetExpiredTokens(importTokens, now);
+
+        auto token = tokenGenerator.get();
+        importTokens[token] = now + IMPORT_TOKEN_IDLE_SECONDS;
+        return tao::json::value({{ "token", token }});
+    }
+
     throw herr("unsupported method: ", method);
+}
+
+// Writes a batch of JSONL events the way strfry import does: signatures are checked, timestamps are not
+std::string RelayServer::adminImport(secp256k1_context *secpCtx, const MsgAdmin::Import &msg) {
+    auto reply = [](int status, const tao::json::value &body){
+        return httpResponse(status, "application/json", tao::json::to_string(body));
+    };
+
+    uint64_t now = hoytech::curr_time_s();
+    forgetExpiredTokens(importTokens, now);
+
+    constexpr std::string_view scheme = "bearer ";
+    std::string token;
+    if (toLower(std::string_view(msg.authorization).substr(0, scheme.size())) == scheme) token = msg.authorization.substr(scheme.size());
+
+    auto tokenIt = importTokens.find(token);
+    if (tokenIt == importTokens.end()) return reply(401, tao::json::value({{ "error", "This import has expired. Start it again." }}));
+    tokenIt->second = now + IMPORT_TOKEN_IDLE_SECONDS;
+
+    std::vector<EventToWrite> events;
+    std::map<std::string, uint64_t> refused;
+    std::string_view body = msg.body;
+
+    while (body.size()) {
+        auto end = body.find('\n');
+        auto line = body.substr(0, end);
+        body.remove_prefix(end == std::string_view::npos ? body.size() : end + 1);
+
+        while (line.size() && std::isspace((unsigned char)line.back())) line.remove_suffix(1);
+        if (line.empty()) continue;
+
+        try {
+            tao::json::value json;
+
+            try {
+                json = tao::json::from_string(line);
+            } catch (std::exception &) {
+                throw herr("not JSON");
+            }
+
+            std::string packedStr, jsonStr;
+            parseAndVerifyEvent(json, secpCtx, true, false, packedStr, jsonStr);
+            events.emplace_back(std::move(packedStr), std::move(jsonStr));
+        } catch (std::exception &e) {
+            // Drops the detail after the colon, such as a size, so the same problem is counted once
+            std::string_view what = e.what();
+            refused[std::string("invalid: ") + std::string(what.substr(0, what.find(':')))]++;
+        }
+    }
+
+    if (events.size()) {
+        try {
+            NegentropyFilterCache neFilterCache;
+            auto txn = env.txn_rw();
+            writeEvents(txn, neFilterCache, events);
+            txn.commit();
+        } catch (std::exception &e) {
+            LE << "Import failed to write " << events.size() << " events: " << e.what();
+            return reply(500, tao::json::value({{ "error", std::string("The relay could not write the events: ") + e.what() }}));
+        }
+    }
+
+    uint64_t added = 0, duplicates = 0;
+
+    for (const auto &ev : events) {
+        if (ev.status == EventWriteStatus::Written) added++;
+        else if (ev.status == EventWriteStatus::Duplicate) duplicates++;
+        else if (ev.status == EventWriteStatus::Replaced) refused["replaced: have newer event"]++;
+        else if (ev.status == EventWriteStatus::Deleted) refused["deleted: user requested deletion"]++;
+        else if (ev.status == EventWriteStatus::Blocked) refused[ev.blockedReason]++;
+    }
+
+    tao::json::value refusedJson = tao::json::empty_object;
+    uint64_t numRefused = 0;
+
+    for (const auto &[reason, count] : refused) {
+        refusedJson[reason] = count;
+        numRefused += count;
+    }
+
+    LI << "Imported a batch from the admin page: " << added << " added, " << duplicates << " dups, " << numRefused << " refused";
+
+    return reply(200, tao::json::value({
+        { "added", added },
+        { "duplicates", duplicates },
+        { "refused", refusedJson },
+    }));
 }
 
 // Stored events reported with NIP-56, that no admin has banned or allowed yet
