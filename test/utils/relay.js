@@ -24,7 +24,7 @@ relay {
 
   auth {
     enabled = true
-    serviceUrl = "wss://relay.test"
+    serviceUrl = "wss://relay.test, wss://alias.test"
     restrictedReadKinds = "4, 1059"
     restrictReadToInvolvedPubkey = ${restrictReadToInvolvedPubkey ? "true" : "false"}
   }

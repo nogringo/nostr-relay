@@ -291,14 +291,12 @@ void RelayServer::ingesterProcessAuth(RelayServerCtx &rsctx, uint64_t connId, co
     bool foundChallenge = false;
     bool foundCorrectRelayUrl = false;
 
-    std::string normalizedServiceUrl = normalizeRelayUrl(cfg().relay__auth__serviceUrl);
-
     for (const auto &tagj : eventJson.at("tags").get_array()) {
         const auto &tag = tagj.get_array();
         if (tag.size() < 2) continue;
         const auto name = tag[0].as<std::string_view>();
         const auto value = tag[1].as<std::string_view>();
-        if (name == "relay" && normalizeRelayUrl(value) == normalizedServiceUrl) {
+        if (name == "relay" && isServiceUrl(value)) {
             foundCorrectRelayUrl = true;
         } else if (name == "challenge" && value == as.challengeSv()) {
             foundChallenge = true;
@@ -306,7 +304,7 @@ void RelayServer::ingesterProcessAuth(RelayServerCtx &rsctx, uint64_t connId, co
     }
 
     if (!foundChallenge) throw herr("challenge string mismatch");
-    if (!foundCorrectRelayUrl) throw herr("incorrect or missing relay tag, expected: " + cfg().relay__auth__serviceUrl);
+    if (!foundCorrectRelayUrl) throw herr("incorrect or missing relay tag, expected: " + primaryServiceUrl());
 
     // set the connection as authenticated with this pubkey
     as.markAuthed(packed.pubkey());

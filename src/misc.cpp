@@ -7,6 +7,7 @@
 #include <signal.h>
 
 #include <algorithm>
+#include <functional>
 #include <string>
 
 #include <openssl/sha.h>
@@ -128,21 +129,17 @@ void exitOnSigPipe() {
 }
 
 
-void parseCommaSeparatedKinds(std::string_view str, flat_hash_set<uint64_t> &out) {
-    out.clear();
-    if (str.empty()) return;
-
+static void foreachCommaSeparated(std::string_view str, const std::function<bool(std::string_view)> &cb) {
     size_t pos = 0;
     while (pos < str.size()) {
         size_t nextComma = str.find(',', pos);
         if (nextComma == std::string::npos) nextComma = str.size();
 
-        std::string_view kindStr = str.substr(pos, nextComma - pos);
-        size_t start = kindStr.find_first_not_of(" \t");
-        size_t end = kindStr.find_last_not_of(" \t");
+        std::string_view item = str.substr(pos, nextComma - pos);
+        size_t start = item.find_first_not_of(" \t");
+        size_t end = item.find_last_not_of(" \t");
         if (start != std::string::npos && end != std::string::npos) {
-            kindStr = kindStr.substr(start, end - start + 1);
-            if (!kindStr.empty()) out.insert(std::stoull(std::string(kindStr)));
+            if (!cb(item.substr(start, end - start + 1))) return;
         }
 
         pos = nextComma + 1;
@@ -150,12 +147,51 @@ void parseCommaSeparatedKinds(std::string_view str, flat_hash_set<uint64_t> &out
 }
 
 
-std::string normalizeRelayUrl(std::string_view url) {
+void parseCommaSeparatedKinds(std::string_view str, flat_hash_set<uint64_t> &out) {
+    out.clear();
+    foreachCommaSeparated(str, [&](std::string_view kindStr){
+        out.insert(std::stoull(std::string(kindStr)));
+        return true;
+    });
+}
+
+
+std::string normalizeRelayUrl(std::string_view input) {
+    std::string url(input);
+    std::transform(url.begin(), url.end(), url.begin(), [](unsigned char c){ return std::tolower(c); });
+
+    std::string_view defaultPort;
+    if (url.starts_with("wss://")) defaultPort = ":443";
+    else if (url.starts_with("ws://")) defaultPort = ":80";
+
     auto pos = url.find("://");
-    if (pos != std::string_view::npos) url.remove_prefix(pos + 3);
+    if (pos != std::string::npos) url.erase(0, pos + 3);
     pos = url.find_first_of("/?#");
-    if (pos != std::string_view::npos) url = url.substr(0, pos);
-    std::string result(url);
-    std::transform(result.begin(), result.end(), result.begin(), [](unsigned char c){ return std::tolower(c); });
-    return result;
+    if (pos != std::string::npos) url.erase(pos);
+    if (defaultPort.size() && url.ends_with(defaultPort)) url.erase(url.size() - defaultPort.size());
+
+    return url;
+}
+
+bool isServiceUrl(std::string_view url) {
+    auto normalized = normalizeRelayUrl(url);
+    bool found = false;
+
+    foreachCommaSeparated(cfg().relay__auth__serviceUrl, [&](std::string_view serviceUrl){
+        found = normalizeRelayUrl(serviceUrl) == normalized;
+        return !found;
+    });
+
+    return found;
+}
+
+std::string primaryServiceUrl() {
+    std::string primary;
+
+    foreachCommaSeparated(cfg().relay__auth__serviceUrl, [&](std::string_view serviceUrl){
+        primary = serviceUrl;
+        return false;
+    });
+
+    return primary;
 }

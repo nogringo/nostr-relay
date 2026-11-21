@@ -695,6 +695,36 @@ doTest({
 });
 
 doTest({
+  desc: "Vanish naming another URL of this relay",
+  events: [
+    { content: "hi", kind: 1, created_at: 5000 },
+    { content: "", kind: 62, created_at: 6000, tags: [relay("wss://alias.test")] },
+  ],
+  verify: [1],
+});
+
+doTest({
+  desc: "Vanish relay URL default port is ignored",
+  events: [
+    { content: "hi", kind: 1, created_at: 5000 },
+    { content: "", kind: 62, created_at: 6000, tags: [relay("wss://relay.test:443")] },
+    { content: "hi", kind: 1, created_at: 7000 },
+    { content: "", kind: 62, created_at: 8000, tags: [relay("ws://alias.test:80/")] },
+  ],
+  verify: [1, 3],
+});
+
+doTest({
+  desc: "Vanish relay URL with another port is rejected",
+  events: [
+    { content: "hi", kind: 1, created_at: 5000 },
+    { content: "", kind: 62, created_at: 6000, tags: [relay("wss://relay.test:8443")] },
+    { content: "", kind: 62, created_at: 6000, tags: [relay("wss://relay.test:80")] },
+  ],
+  verify: [0],
+});
+
+doTest({
   desc: "Vanish for another relay is rejected",
   events: [
     { content: "hi", kind: 1, created_at: 5000 },

@@ -55,10 +55,7 @@ std::string nostrJsonToPackedEvent(const tao::json::value &v) {
                 if (expiration < 100) throw herr("invalid expiration");
             }
         } else if (tagName == "relay" && kind == 62) {
-            const auto &serviceUrl = cfg().relay__auth__serviceUrl;
-            if (tagVal == "ALL_RELAYS" || (serviceUrl.size() && normalizeRelayUrl(tagVal) == normalizeRelayUrl(serviceUrl))) {
-                vanishTargetsThisRelay = true;
-            }
+            if (tagVal == "ALL_RELAYS" || isServiceUrl(tagVal)) vanishTargetsThisRelay = true;
         }
     }
 

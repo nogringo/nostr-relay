@@ -211,7 +211,7 @@ async function testRestrictedFilterReturnsAllIfAuthenticatedAndInvolvementNotReq
   // send AUTH message with challenge string
   const authEvent = signEvent(
     authChallengeString,
-    "wss://relay.test",
+    "wss://alias.test:443",
     ids[0].sec,
   );
   client.send(["AUTH", authEvent]);

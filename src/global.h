@@ -20,5 +20,7 @@ uint64_t getDBVersion(lmdb::txn &txn);
 void exitOnSigPipe();
 void parseCommaSeparatedKinds(std::string_view str, flat_hash_set<uint64_t> &out); 
 std::string normalizeRelayUrl(std::string_view url);
+bool isServiceUrl(std::string_view url);
+std::string primaryServiceUrl();
 
 extern lmdb::dbi negentropyDbi;
