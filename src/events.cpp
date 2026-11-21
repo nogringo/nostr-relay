@@ -283,8 +283,9 @@ static void collectVanishedLevIds(lmdb::txn &txn, const PackedEventView &vanish,
 
     std::string pubkey(vanish.pubkey());
 
-    // Prior requests to vanish are kept, as bookkeeping and to keep blocking re-broadcasts
-    collect(env.dbi_Event__pubkey, pubkey, [](uint64_t kind){ return kind != 62; });
+    // Prior requests to vanish are kept, as bookkeeping and to keep blocking re-broadcasts.
+    // Gift wraps signed by the pubkey belong to their recipient (NIP-59).
+    collect(env.dbi_Event__pubkey, pubkey, [](uint64_t kind){ return kind != 62 && !isGiftWrapKind(kind); });
 
     // NIP-59: gift wraps addressed to the pubkey
     collect(env.dbi_Event__tag, "p" + pubkey, isGiftWrapKind);
@@ -313,32 +314,27 @@ void writeEvents(lmdb::txn &txn, NegentropyFilterCache &neFilterCache, std::vect
                 continue;
             }
 
-            // NIP-62: requests to vanish are never blocked, neither by a kind 5 nor by another request
-            if (packed.kind() != 62) {
-                if (env.lookup_Event__deletion(txn, std::string(packed.id()) + std::string(packed.pubkey())) ||
-                    isCoveredByVanish(txn, packed.pubkey(), packed.created_at())) {
-                    ev.status = EventWriteStatus::Deleted;
-                    continue;
-                }
+            auto isDeletedBy = [&](std::string_view pubkey){
+                return env.lookup_Event__deletion(txn, std::string(packed.id()) + std::string(pubkey)) ||
+                    isCoveredByVanish(txn, pubkey, packed.created_at());
+            };
+
+            bool deleted = false;
+
+            if (isGiftWrapKind(packed.kind())) {
+                // NIP-59: only the recipient (p-tag) can delete a gift wrap, never its signing key
+                packed.foreachTag([&](char tagName, std::string_view tagVal){
+                    if (tagName == 'p' && isDeletedBy(tagVal)) deleted = true;
+                    return !deleted;
+                });
+            } else if (packed.kind() != 62) {
+                // NIP-62: requests to vanish are never blocked, neither by a kind 5 nor by another request
+                deleted = isDeletedBy(packed.pubkey());
             }
 
-            // NIP-59: a gift wrap is signed by a random key, so its recipient (p-tag) may have
-            // deleted it via NIP-09 or NIP-62. Block re-publication if such a deletion is on record.
-            if (isGiftWrapKind(packed.kind())) {
-                bool recipientDeleted = false;
-                packed.foreachTag([&](char tagName, std::string_view tagVal){
-                    if (tagName != 'p') return true;
-                    if (env.lookup_Event__deletion(txn, std::string(packed.id()) + std::string(tagVal)) ||
-                        isCoveredByVanish(txn, tagVal, packed.created_at())) {
-                        recipientDeleted = true;
-                        return false;
-                    }
-                    return true;
-                });
-                if (recipientDeleted) {
-                    ev.status = EventWriteStatus::Deleted;
-                    continue;
-                }
+            if (deleted) {
+                ev.status = EventWriteStatus::Deleted;
+                continue;
             }
 
             if (isReplaceableKind(packed.kind()) || isParamReplaceableKind(packed.kind())) {
@@ -399,19 +395,16 @@ void writeEvents(lmdb::txn &txn, NegentropyFilterCache &neFilterCache, std::vect
                         auto otherEv = lookupEventById(txn, tagVal);
                         if (otherEv) {
                             auto otherPacked = PackedEventView(otherEv->buf);
-                            bool canDelete = otherPacked.pubkey() == packed.pubkey() && otherPacked.kind() != 62;
+                            bool canDelete = false;
 
-                            // NIP-59: gift wraps (kind 1059/21059) are signed by a random one-time-use
-                            // key, so the recipient is never the author. Per NIP-59, relays SHOULD delete
-                            // such events whose p-tag matches the signer of a NIP-09 deletion.
-                            if (!canDelete && isGiftWrapKind(otherPacked.kind())) {
+                            if (isGiftWrapKind(otherPacked.kind())) {
+                                // NIP-59: only the recipient (p-tag) can delete a gift wrap, never its signing key
                                 otherPacked.foreachTag([&](char otherTagName, std::string_view otherTagVal){
-                                    if (otherTagName == 'p' && otherTagVal == packed.pubkey()) {
-                                        canDelete = true;
-                                        return false;
-                                    }
-                                    return true;
+                                    if (otherTagName == 'p' && otherTagVal == packed.pubkey()) canDelete = true;
+                                    return !canDelete;
                                 });
+                            } else {
+                                canDelete = otherPacked.pubkey() == packed.pubkey() && otherPacked.kind() != 62;
                             }
 
                             if (canDelete) {

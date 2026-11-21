@@ -596,6 +596,26 @@ doTest({
   verify: [1],
 });
 
+doTest({
+  desc: "Gift wrap signer can't delete",
+  events: [
+    { content: "wrapped", kind: 1059, created_at: 5000, tags: [p(ids[1].pub)] },
+    { content: "", kind: 5, created_at: 6000, tags: [e("EV_0")] },
+  ],
+  verify: [0, 1],
+});
+
+const signedWrap = { content: "wrapped", kind: 1059, created_at: 5000, tags: [p(ids[1].pub)] };
+
+doTest({
+  desc: "Gift wrap signer can't delete before publication",
+  events: [
+    { content: "", kind: 5, created_at: 4000, tags: [e(buildEvent({ pub: ids[0].pub, ...signedWrap }).id)] },
+    signedWrap,
+  ],
+  verify: [0, 1],
+});
+
 // ---- NIP-62 REQUEST TO VANISH TESTS ----
 
 const relay = (v) => ["relay", v];
@@ -644,6 +664,16 @@ doTest({
     { from: 2, content: "new dm", kind: 1059, created_at: 7000, tags: [p(ids[0].pub)] },
   ],
   verify: [1, 2, 4],
+});
+
+doTest({
+  desc: "Vanish keeps gift wraps signed by the pubkey",
+  events: [
+    { content: "wrapped", kind: 1059, created_at: 5000, tags: [p(ids[1].pub)] },
+    { content: "", kind: 62, created_at: 6000, tags: [thisRelay] },
+    { content: "wrapped later", kind: 1059, created_at: 5500, tags: [p(ids[1].pub)] },
+  ],
+  verify: [0, 2, 1],
 });
 
 doTest({
