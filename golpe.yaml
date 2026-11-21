@@ -110,6 +110,10 @@ tablesRaw:
   EventPayload:
     flags: 'MDB_INTEGERKEY'
 
+  ## levIds of kind 5 events that deleted a gift wrap (NIP-59), empty vals
+  GiftWrapDeletion:
+    flags: 'MDB_INTEGERKEY'
+
 config:
   - name: db
     desc: "Directory that contains the strfry LMDB database"

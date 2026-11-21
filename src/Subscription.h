@@ -60,6 +60,7 @@ struct Subscription : NonCopyable {
     // State
 
     uint64_t latestEventId = MAX_U64;
+    mutable uint64_t visibleCount = 0; // COUNT: matches this client may read, updated while the query scans
 };
 
 

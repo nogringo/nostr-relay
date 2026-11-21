@@ -171,7 +171,7 @@ void RelayServer::runNegentropy(ThreadPool<MsgNegentropy>::Thread &thr) {
                 auto it = connIdToAuthedPubkey.find(sub.connId);
                 Bytes32 subscriberAuthedPubkey = it == connIdToAuthedPubkey.end() ? Bytes32() : it->second;
 
-                if (ReadRestrictor::shouldSendToSubscriber(packed, subscriberAuthedPubkey))
+                if (ReadRestrictor::shouldSendToSubscriber(txn, levId, packed, subscriberAuthedPubkey))
                 view->storageVector.insert(packed.created_at(), packed.id());
             } catch (std::exception &) {
                 // levId was deleted when query was paused

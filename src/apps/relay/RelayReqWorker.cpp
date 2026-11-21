@@ -9,29 +9,29 @@ void RelayServer::runReqWorker(ThreadPool<MsgReqWorker>::Thread &thr) {
     flat_hash_map<uint64_t, Bytes32> connIdToAuthedPubkey;
 
     queries.onEvent = [&](lmdb::txn &txn, const auto &sub, uint64_t levId, std::string_view eventPayload){
-        if (sub.countOnly) return;
         auto it = connIdToAuthedPubkey.find(sub.connId);
         auto ev = lookupEventByLevId(txn, levId);
         PackedEventView packed(ev.buf);
         Bytes32 subscriberAuthedPubkey = it == connIdToAuthedPubkey.end() ? Bytes32() : it->second;
-        if (!ReadRestrictor::shouldSendToSubscriber(packed, subscriberAuthedPubkey)) {
-            return; 
+        if (!ReadRestrictor::shouldSendToSubscriber(txn, levId, packed, subscriberAuthedPubkey)) {
+            return;
         }
-        
+
+        if (sub.countOnly) {
+            sub.visibleCount++;
+            return;
+        }
+
         sendEvent(sub.connId, sub.subId, decodeEventPayload(txn, decomp, eventPayload, nullptr, nullptr));
     };
 
     queries.onComplete = [&](lmdb::txn &, Subscription &sub, uint64_t total){
         if (sub.countOnly) {
-            bool limited = false;
-
-            if (total > cfg().relay__maxFilterLimitCount) {
-                total = cfg().relay__maxFilterLimitCount;
-                limited = true;
-            }
+            // total also counts the events this client can't see, it only tells if the scan stopped at the limit
+            bool limited = total > cfg().relay__maxFilterLimitCount;
 
             tao::json::value countBody = tao::json::value({
-                { "count", total },
+                { "count", std::min(sub.visibleCount, cfg().relay__maxFilterLimitCount) },
             });
 
             if (limited) countBody["limited"] = true;

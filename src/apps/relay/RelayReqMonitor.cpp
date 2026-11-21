@@ -37,7 +37,7 @@ void RelayServer::runReqMonitor(ThreadPool<MsgReqMonitor>::Thread &thr) {
                 env.foreach_Event(txn, [&](auto &ev){
                     PackedEventView packed(ev.buf);
                     if (msg->sub.filterGroup.doesMatch(packed)) {
-                        if (ReadRestrictor::shouldSendToSubscriber(packed, connAuthedPubkey)) {
+                        if (ReadRestrictor::shouldSendToSubscriber(txn, ev.primaryKeyId, packed, connAuthedPubkey)) {
                             sendEvent(connId, msg->sub.subId, getEventJson(txn, decomp, ev.primaryKeyId));
                         }
                     }
@@ -61,12 +61,12 @@ void RelayServer::runReqMonitor(ThreadPool<MsgReqMonitor>::Thread &thr) {
                 env.foreach_Event(txn, [&](auto &ev){
                     monitors.process(txn, ev, [&](RecipientList &&recipients, uint64_t levId){
                         PackedEventView packed(ev.buf);
-                        if (ReadRestrictor::restrictedKinds().contains(packed.kind())) {
+                        if (ReadRestrictor::mayBeRestricted(packed)) {
                             RecipientList filteredRecipients;
                             for (const auto &recipient : recipients) {
                                 auto it = connIdToAuthedPubkey.find(recipient.connId);
                                 Bytes32 authedPubkey = it == connIdToAuthedPubkey.end() ? Bytes32() : it->second;
-                                if (ReadRestrictor::shouldSendToSubscriber(packed, authedPubkey)) {
+                                if (ReadRestrictor::shouldSendToSubscriber(txn, levId, packed, authedPubkey)) {
                                     filteredRecipients.emplace_back(recipient);
                                 }
                             }

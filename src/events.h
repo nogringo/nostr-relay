@@ -90,6 +90,11 @@ struct EventToWrite {
 void writeEvents(lmdb::txn &txn, NegentropyFilterCache &neFilterCache, std::vector<EventToWrite> &evs, bool logDeletions = true);
 bool deleteEventBasic(lmdb::txn &txn, uint64_t levId);
 
+inline bool deletedGiftWrap(lmdb::txn &txn, uint64_t deletionLevId) {
+    std::string_view val;
+    return env.dbi_GiftWrapDeletion.get(txn, lmdb::to_sv<uint64_t>(deletionLevId), val);
+}
+
 template <typename C>
 uint64_t deleteEvents(lmdb::txn &txn, NegentropyFilterCache &neFilterCache, const C &levIds) {
     uint64_t numDeleted = 0;

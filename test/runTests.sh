@@ -25,6 +25,12 @@ node "./test/tests/readRestrictTest.js" \
   && pass "./test/tests/readRestrictTest.js" \
   || fail "./test/tests/readRestrictTest.js failed"
 
+info "running gift wrap privacy tests..."
+
+node "./test/tests/giftWrapPrivacyTest.js" \
+  && pass "./test/tests/giftWrapPrivacyTest.js" \
+  || fail "./test/tests/giftWrapPrivacyTest.js failed"
+
 info "Seeding events..."
 
 perl "./test/utils/generate-seed-data.pl" -o - | ./strfry --config ./test/cfgs/test.conf import --no-verify

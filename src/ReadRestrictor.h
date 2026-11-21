@@ -4,6 +4,7 @@
 
 #include "PackedEvent.h"
 #include "config.h"
+#include "events.h"
 #include "filters.h"
 
 #include "golpe.h"
@@ -90,9 +91,31 @@ public:
         return true;
     }
 
+    // False means the event is public, true that shouldSendToSubscriber must decide
+    static bool mayBeRestricted(const PackedEventView &packed) {
+        return restrictedKinds().contains(packed.kind()) || (packed.kind() == 5 && restrictedKinds().contains(1059));
+    }
+
+    // A gift wrap deletion is as private as the wrap, or it would tell the sender when the wrap was deleted
+    static bool isGiftWrapDeletion(lmdb::txn &txn, uint64_t levId, const PackedEventView &packed) {
+        if (packed.kind() != 5 || !restrictedKinds().contains(1059)) return false;
+        if (deletedGiftWrap(txn, levId)) return true;
+
+        bool namesGiftWrapKind = false;
+
+        packed.foreachTag([&](char tagName, std::string_view tagVal) {
+            if (tagName == 'k' && (tagVal == "1059" || tagVal == "21059")) namesGiftWrapKind = true;
+            return !namesGiftWrapKind;
+        });
+
+        return namesGiftWrapKind;
+    }
+
     // Returns true if the event should be sent to the subscriber
-    static bool shouldSendToSubscriber(const PackedEventView &packed, const Bytes32 &subscriberAuthedPubkey) {
-        if (!restrictedKinds().contains(packed.kind())) {
+    static bool shouldSendToSubscriber(lmdb::txn &txn, uint64_t levId, const PackedEventView &packed, const Bytes32 &subscriberAuthedPubkey) {
+        bool giftWrapDeletion = isGiftWrapDeletion(txn, levId, packed);
+
+        if (!giftWrapDeletion && !restrictedKinds().contains(packed.kind())) {
             return true;
         }
 
@@ -102,7 +125,10 @@ public:
 
         if(!cfg().relay__auth__restrictReadToInvolvedPubkey) return true;
 
-        bool involved = subscriberAuthedPubkey == packed.pubkey();
+        // NIP-59: a gift wrap is signed by a throwaway key, only its recipient is involved
+        bool involved = !isGiftWrapKind(packed.kind()) && subscriberAuthedPubkey == packed.pubkey();
+
+        if (giftWrapDeletion) return involved;
 
         packed.foreachTag([&](char tagName, std::string_view tagVal) {
             if (tagName == 'p' && tagVal.size() == 32) {

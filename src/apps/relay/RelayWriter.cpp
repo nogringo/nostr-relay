@@ -120,6 +120,12 @@ void RelayServer::runWriter(ThreadPool<MsgWriter>::Thread &thr) {
                 LI << "Rejected event. " << message << ", id=" << eventIdHex;
             }
 
+            if (newEvent.status == EventWriteStatus::Deleted && isGiftWrapKind(packed.kind())) {
+                // NIP-59: answer as if the wrap were still stored, so its sender can't tell it was deleted
+                message = "duplicate: have this event";
+                written = true;
+            }
+
             MsgWriter::AddEvent *addEventMsg = static_cast<MsgWriter::AddEvent*>(newEvent.userData);
 
             sendOKResponse(addEventMsg->connId, eventIdHex, written, message);

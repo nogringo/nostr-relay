@@ -244,6 +244,7 @@ std::string_view getEventJson(lmdb::txn &txn, Decompressor &decomp, uint64_t lev
 bool deleteEventBasic(lmdb::txn &txn, uint64_t levId) {
     bool deleted = env.dbi_EventPayload.del(txn, lmdb::to_sv<uint64_t>(levId));
     env.delete_Event(txn, levId);
+    env.dbi_GiftWrapDeletion.del(txn, lmdb::to_sv<uint64_t>(levId));
     return deleted;
 }
 
@@ -385,12 +386,18 @@ void writeEvents(lmdb::txn &txn, NegentropyFilterCache &neFilterCache, std::vect
                 }
             }
 
+            bool deletesGiftWrap = false;
+
             if (packed.kind() == 5) {
                 // Deletion event, delete all referenced events
                 packed.foreachTag([&](char tagName, std::string_view tagVal){
                     if (tagName == 'e') {
                         auto otherEv = lookupEventById(txn, tagVal);
-                        if (otherEv) {
+                        if (!otherEv) {
+                            // A new deletion of an already deleted gift wrap stays as private as the first one
+                            auto priorDeletion = env.lookup_Event__deletion(txn, std::string(tagVal) + std::string(packed.pubkey()));
+                            if (priorDeletion && deletedGiftWrap(txn, priorDeletion->primaryKeyId)) deletesGiftWrap = true;
+                        } else {
                             auto otherPacked = PackedEventView(otherEv->buf);
                             bool canDelete = false;
 
@@ -407,6 +414,7 @@ void writeEvents(lmdb::txn &txn, NegentropyFilterCache &neFilterCache, std::vect
                             if (canDelete) {
                                 if (logDeletions) LI << "Deleting event (kind 5, e-tag). id=" << to_hex(tagVal);
                                 levIdsToDelete.push_back(otherEv->primaryKeyId);
+                                if (isGiftWrapKind(otherPacked.kind())) deletesGiftWrap = true;
                             }
                         }
                     } else if (tagName == 'a') {
@@ -450,6 +458,8 @@ void writeEvents(lmdb::txn &txn, NegentropyFilterCache &neFilterCache, std::vect
                 tmpBuf += '\x00';
                 tmpBuf += ev.jsonStr;
                 env.dbi_EventPayload.put(txn, lmdb::to_sv<uint64_t>(ev.levId), tmpBuf);
+
+                if (deletesGiftWrap) env.dbi_GiftWrapDeletion.put(txn, lmdb::to_sv<uint64_t>(ev.levId), "");
 
                 updateNegentropy(PackedEventView(ev.packedStr), true);
 
