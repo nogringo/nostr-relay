@@ -17,6 +17,7 @@ static const std::vector<std::string> supportedMethods = {
     "changerelayname", "changerelaydescription", "changerelayicon",
     "allowkind", "unallowkind", "disallowkind", "undisallowkind", "listallowedkinds", "listdisallowedkinds",
     "blockip", "unblockip", "listblockedips",
+    "settings", "changesetting",
     "stats",
 };
 
@@ -384,6 +385,22 @@ tao::json::value RelayServer::adminMethod(Decompressor &decomp, const std::strin
     }
 
     if (method == "listblockedips") return list(env.dbi_BlockedIP, "ip", [](std::string_view k){ return tao::json::value(renderIP(k)); });
+
+    if (method == "settings") {
+        auto txn = env.txn_ro();
+        tao::json::value output = tao::json::empty_object;
+        for (const auto &entry : adminStore::settingDefaults) output[entry.first] = adminStore::setting(txn, entry.first);
+        return output;
+    }
+
+    if (method == "changesetting") {
+        auto name = stringParam(0, "setting");
+        if (!adminStore::settingDefaults.contains(name)) throw herr("unknown setting: ", name);
+        if (params.size() < 2 || !params[1].is_boolean()) throw herr(name, " must be true or false");
+        bool enabled = params[1].get_boolean();
+
+        return change([&](lmdb::txn &txn){ env.dbi_RelaySetting.put(txn, name, enabled ? "1" : "0"); });
+    }
 
     if (method == "stats") return stats();
 

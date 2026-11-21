@@ -880,7 +880,7 @@ let allowedPubkeyCount = 0;
 let allowedKindCount = 0;
 
 async function loadAccess() {
-  await Promise.all([loadAllowedPubkeys(), loadKinds(), loadBlockedIps()]);
+  await Promise.all([loadAllowedPubkeys(), loadKinds(), loadSettings(), loadBlockedIps()]);
 }
 
 async function loadAllowedPubkeys() {
@@ -956,6 +956,25 @@ onSubmit("allow-kind-form", async ({ kind }) => {
 onSubmit("disallow-kind-form", async ({ kind }) => {
   await rpc("disallowkind", [parseKind(kind)]);
   await loadKinds();
+});
+
+async function loadSettings() {
+  const settings = await read("settings");
+  $("nip70-toggle").checked = settings.nip70;
+  $("nip70-toggle").disabled = false;
+}
+
+$("nip70-toggle").addEventListener("change", (event) => {
+  const toggle = event.currentTarget;
+
+  busy(toggle, async () => {
+    try {
+      await rpc("changesetting", ["nip70", toggle.checked]);
+    } catch (error) {
+      toggle.checked = !toggle.checked;
+      throw error;
+    }
+  });
 });
 
 async function loadBlockedIps() {

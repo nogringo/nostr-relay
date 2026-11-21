@@ -5,7 +5,7 @@ import { finalizeEvent, generateSecretKey, getPublicKey } from "@nostr/tools";
 import { openWebSocket, WsClient } from "../utils/websocketClient.js";
 import { writeConfig, runStrfry, runRelaySuite, config } from "../utils/relay.js";
 import ids from "../utils/dummyIds.json" with { type: "json" };
-import { buildEvent, bytesToHex, hexToBytes, sha256 } from "../utils/events.js";
+import { buildEvent, bytesToHex, hexToBytes, sha256, signEvent } from "../utils/events.js";
 
 // NIP-86 relay management API, authorized with NIP-98
 
@@ -242,6 +242,45 @@ async function kindTests(client) {
   pass("kinds can be allowed and disallowed");
 }
 
+async function protectedEventTests(wsUrl, client) {
+  const supportedNips = async () => (await (await fetch(httpUrl, { headers: { Accept: "application/nostr+json" } })).json()).supported_nips;
+  const protectedNote = (key) => sign(key, { tags: [["-"]] });
+  const repostOf = (event) => sign(alice, { kind: 6, tags: [["e", event.id], ["p", event.pubkey]], content: JSON.stringify(event) });
+
+  const bobClient = await connect(wsUrl);
+  const challenge = (await bobClient.waitFor((m) => m[0] === "AUTH"))[1];
+  const auth = signEvent(challenge, "wss://relay.test", bob.sec);
+  bobClient.send(["AUTH", auth]);
+  const authOk = await bobClient.waitFor((m) => m[0] === "OK" && m[1] === auth.id);
+  expect(authOk[2] === true, `bob must authenticate: ${JSON.stringify(authOk)}`);
+
+  const bobsProtected = protectedNote(bob);
+
+  expect((await call("settings")).nip70 === true, "NIP-70 must be on by default");
+  expect((await supportedNips()).includes(70), "NIP-11 must list NIP-70");
+  await expectAccepted(bobClient, bobsProtected, "a protected event from its authenticated author");
+  await expectRejected(bobClient, protectedNote(alice), "restricted:", "a protected event from someone else");
+  await expectRejected(client, protectedNote(alice), "auth-required:", "a protected event without authentication");
+  await expectRejected(client, repostOf(bobsProtected), "blocked:", "a repost that embeds a protected event");
+
+  await call("changesetting", ["nip70", false]);
+  expect((await call("settings")).nip70 === false, "settings must show NIP-70 off");
+  expect(!(await supportedNips()).includes(70), "NIP-11 must no longer list NIP-70");
+  await expectAccepted(bobClient, protectedNote(alice), "a protected event from someone else while NIP-70 is off");
+  await expectAccepted(client, protectedNote(alice), "a protected event without authentication while NIP-70 is off");
+  await expectAccepted(client, repostOf(bobsProtected), "a repost that embeds a protected event while NIP-70 is off");
+
+  expect((await rpc("changesetting", ["nosuchsetting", true])).error, "an unknown setting must be refused");
+  expect((await rpc("changesetting", ["nip70", "false"])).error, "a setting value that is not a boolean must be refused");
+
+  await call("changesetting", ["nip70", true]);
+  expect((await supportedNips()).includes(70), "NIP-11 must list NIP-70 again");
+  await expectRejected(client, protectedNote(alice), "auth-required:", "a protected event without authentication once NIP-70 is back on");
+
+  await bobClient.close();
+  pass("with NIP-70 off, the - tag is ignored");
+}
+
 async function relayInfoTests() {
   const nip11 = async () => (await fetch(httpUrl, { headers: { Accept: "application/nostr+json" } })).json();
 
@@ -352,6 +391,7 @@ async function tests({ wsUrl, client }) {
   await eventBanTests(client);
   await allowListTests(client);
   await kindTests(client);
+  await protectedEventTests(wsUrl, client);
   await relayInfoTests();
   await moderationTests(client);
   await statsTests();

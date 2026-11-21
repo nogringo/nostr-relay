@@ -128,6 +128,9 @@ tablesRaw:
   ## NIP-11 fields changed through NIP-86, overriding the config file. Keys are field names
   RelayInfo:
 
+  ## Relay settings changed through NIP-86. Keys are setting names, vals are "0" or "1"
+  RelaySetting:
+
 config:
   - name: db
     desc: "Directory that contains the strfry LMDB database"

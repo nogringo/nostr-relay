@@ -126,6 +126,16 @@ inline bool isIpBlocked(lmdb::txn &txn, std::string_view ipBytes) {
     return listContains(txn, env.dbi_BlockedIP, canonicalIp(ipBytes));
 }
 
+inline const flat_hash_map<std::string, bool> settingDefaults = {
+    { "nip70", true }, // when false, the "-" tag is ignored
+};
+
+inline bool setting(lmdb::txn &txn, const std::string &name) {
+    std::string_view val;
+    if (env.dbi_RelaySetting.get(txn, name, val)) return val == "1";
+    return settingDefaults.at(name);
+}
+
 inline std::string relayInfo(lmdb::txn &txn, std::string_view field, const std::string &configured) {
     std::string_view val;
     if (env.dbi_RelayInfo.get(txn, field, val)) return std::string(val);

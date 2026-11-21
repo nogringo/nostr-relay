@@ -142,6 +142,7 @@ From the page you can:
 * Review reported events (NIP-56), and keep or ban them.
 * Ban pubkeys and events. A ban deletes the matching events and refuses them from then on.
 * Restrict who can publish to a list of pubkeys, and which kinds are accepted.
+* Turn protected events (NIP-70) on or off.
 * Block IP addresses. A blocked address is disconnected and can't connect again.
 * Change the name, description and icon shown in NIP-11 and on the landing page.
 
@@ -150,9 +151,10 @@ Bans and lists are stored in the database. They survive restarts, and `strfry im
 * Admins can always publish, even when only listed pubkeys can.
 * Under a pubkey allow list, a gift wrap (NIP-59) is accepted when its recipient is on the list, since its author is a throwaway key.
 * Requests to vanish (NIP-62) are always accepted, as NIP-62 requires.
+* A protected event (NIP-70) is accepted from its author once they authenticate with NIP-42, and a repost that embeds one is refused. When NIP-70 is turned off, the relay ignores the `-` tag: these events are treated like any other, and 70 is dropped from the NIP-11 `supported_nips`. `import`, `stream`, `sync` and `router` never check the tag.
 * When the banned event is the most recent one stored, the cron thread deletes it once a newer event arrives, so its database ID is never reused.
 
-Besides the standard NIP-86 methods, strfry supports `stats`, which returns the numbers shown on the page, and `unallowkind` and `undisallowkind`, which take a kind off a list without adding it to the other. The NIP-43 role and claim methods are not supported.
+Besides the standard NIP-86 methods, strfry supports `stats`, which returns the numbers shown on the page, `unallowkind` and `undisallowkind`, which take a kind off a list without adding it to the other, and `settings` and `changesetting`, which read and change the relay's settings. The only setting is `nip70`, `true` by default: `changesetting` with `["nip70", false]` makes the relay ignore the `-` tag. The NIP-43 role and claim methods are not supported.
 
 The page's JavaScript dependencies are bundled in `admin/dist/nostr.js`. That file is committed, so building strfry needs no JavaScript tooling. To update the dependencies, run `npm ci && npm run build` in `admin/`.
 

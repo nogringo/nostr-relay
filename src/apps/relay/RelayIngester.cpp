@@ -1,6 +1,7 @@
 #include "RelayServer.h"
 #include "jsonParseUtils.h"
 #include "ReadRestrictor.h"
+#include "AdminStore.h"
 
 
 void RelayServer::runIngester(ThreadPool<MsgIngester>::Thread &thr) {
@@ -126,7 +127,7 @@ void RelayServer::ingesterProcessEvent(lmdb::txn &txn, RelayServerCtx &rsctx, ui
     PackedEventView packed(packedStr);
     Bytes32 authedPubkey;
 
-    {
+    if (adminStore::setting(txn, "nip70")) {
         // discard reposts that embed protected events
         if (packed.kind() == 6 || packed.kind() == 16) {
             if (origJson.at("content").get_string().find("[\"-\"]") != std::string::npos) {

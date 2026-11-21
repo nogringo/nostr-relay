@@ -34,6 +34,7 @@ struct RelayInfo {
     std::string description;
     std::string icon;
     bool restrictedWrites;
+    bool nip70;
 };
 
 static RelayInfo currentRelayInfo() {
@@ -44,6 +45,7 @@ static RelayInfo currentRelayInfo() {
         adminStore::relayInfo(txn, "description", cfg().relay__info__description),
         adminStore::relayInfo(txn, "icon", cfg().relay__info__icon),
         !adminStore::listEmpty(txn, env.dbi_AllowedPubkey),
+        adminStore::setting(txn, "nip70"),
     };
 }
 
@@ -95,10 +97,12 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
     tempBuf.reserve(cfg().events__maxEventSize + MAX_SUBID_SIZE + 100);
 
 
-    auto supportedNips = []{
-        tao::json::value output = tao::json::value::array({ 1, 2, 4, 9, 11, 28, 40, 59, 62, 70 });
+    auto supportedNips = [](const RelayInfo &info){
+        tao::json::value output = tao::json::value::array({ 1, 2, 4, 9, 11, 28, 40, 59, 62 });
 
-        if (cfg().relay__auth__enabled && cfg().relay__auth__serviceUrl.size() > 0) output.push_back(42);
+        bool authEnabled = cfg().relay__auth__enabled && cfg().relay__auth__serviceUrl.size() > 0;
+        if (authEnabled) output.push_back(42);
+        if (authEnabled && info.nip70) output.push_back(70);
         if (cfg().relay__maxFilterLimitCount > 0) output.push_back(45);
         if (cfg().relay__negentropy__enabled) output.push_back(77);
         if (adminEnabled()) output.push_back(86);
@@ -132,7 +136,7 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
             };
 
             tao::json::value nip11 = tao::json::value({
-                { "supported_nips", supportedNips() },
+                { "supported_nips", supportedNips(info) },
                 { "software", "git+https://github.com/hoytech/strfry.git" },
                 { "version", APP_GIT_VERSION },
                 { "negentropy", negentropy::PROTOCOL_VERSION - 0x60 },
@@ -196,7 +200,7 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
                 std::function<std::string(std::string_view)> maybeNpub;
                 uint64_t uptime;
                 RelayInfo info;
-            } ctx = { tao::json::to_string(supportedNips()), APP_GIT_VERSION, negentropy::PROTOCOL_VERSION - 0x60, maybeUrl, maybeNpub, (uint64_t)::time(nullptr) - serverStart, info };
+            } ctx = { tao::json::to_string(supportedNips(info)), APP_GIT_VERSION, negentropy::PROTOCOL_VERSION - 0x60, maybeUrl, maybeNpub, (uint64_t)::time(nullptr) - serverStart, info };
 
             rendered = preGenerateHttpResponse("text/html", ::strfrytmpl::landing(ctx).str);
             ver = cfg().version();

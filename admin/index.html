@@ -433,6 +433,22 @@ section.panel {
 
 .state.closed { border-left-color: var(--saffron); }
 
+.toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 16px 0 0;
+    cursor: pointer;
+}
+
+.toggle input {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    padding: 0;
+    accent-color: var(--leaf);
+}
+
 /* Reported events */
 
 .tickets { margin-top: 12px; display: grid; gap: 12px; }
@@ -645,6 +661,12 @@ section.panel {
                     <input name="kind" class="narrow" type="number" min="0" step="1" inputmode="numeric" placeholder="Kind number" aria-label="Kind to refuse" required>
                     <button type="submit">Add</button>
                 </form>
+            </section>
+
+            <section class="panel">
+                <h2>Protected events</h2>
+                <p class="explain">With NIP-70, an event tagged <code>["-"]</code> may only be published by its author, who must first authenticate (NIP-42), and reposts can't embed it. Turned off, the relay ignores the tag and treats these events like any other.</p>
+                <label class="toggle"><input type="checkbox" id="nip70-toggle" disabled> Enforce NIP-70</label>
             </section>
 
             <section class="panel">
