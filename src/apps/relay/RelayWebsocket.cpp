@@ -7,6 +7,7 @@
 #include "PrometheusMetrics.h"
 #include "AdminStore.h"
 #include "AdminAssets.h"
+#include "PushSubscription.h"
 
 
 
@@ -150,6 +151,8 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
         if (adminEnabled()) output.push_back(86);
 
         std::sort(output.get_array().begin(), output.get_array().end());
+
+        if (pushEnabled()) output.push_back("9a");
 
         if (cfg().relay__info__nips.size() == 0) return output;
 

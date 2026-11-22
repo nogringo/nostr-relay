@@ -28,6 +28,7 @@ If you are using strfry, please [join our telegram chat](https://t.me/strfry_use
     * [Running a relay](#running-a-relay)
     * [Configuration](#configuration)
     * [Admin interface](#admin-interface)
+    * [Push notifications](#push-notifications)
     * [Selecting and Deleting Events](#selecting-and-deleting-events)
     * [Importing data](#importing-data)
     * [Exporting data](#exporting-data)
@@ -116,7 +117,7 @@ However, in addition to `db` these are commonly used config parameters:
 
 * `relay.bind`: By default it only listens for connections from localhost. This is fine during development and testing, or if you are putting a reverse proxy in front of strfry, but if you want the outside world to connect directly to your relay, you should change this to `0.0.0.0` (which means any IP can connect).
 * `relay.port`: By default this is `7777`, but you may want to listen on a different port.
-* `relay.auth.serviceUrl`: This is the external address of your relay to the outside world. It must be set for NIP-42 AUTH and NIP-62 requests to vanish to work, typically something like `wss://my-relay.com`. If the relay is reachable at several URLs, list them all separated by commas, for example `wss://my-relay.com, wss://nostr.my-relay.com`.
+* `relay.auth.serviceUrl`: This is the external address of your relay to the outside world. It must be set for NIP-42 AUTH, NIP-62 requests to vanish and NIP-9a push subscriptions to work, typically something like `wss://my-relay.com`. If the relay is reachable at several URLs, list them all separated by commas, for example `wss://my-relay.com, wss://nostr.my-relay.com`.
 * `relay.info.name`, `relay.info.description`, etc: These are shown in the NIP-11 output and the HTML landing page served by strfry. They provide users extra information about who runs this relay, and its policies.
 * `relay.admin.pubkeys`: The pubkeys allowed to manage the relay from its [admin interface](#admin-interface).
 
@@ -159,6 +160,20 @@ Bans and lists are stored in the database. They survive restarts, and `strfry im
 Besides the standard NIP-86 methods, strfry supports `stats`, which returns the numbers shown on the page, `unallowkind` and `undisallowkind`, which take a kind off a list without adding it to the other, and `settings` and `changesetting`, which read and change the relay's settings. The only setting is `nip70`, `true` by default: `changesetting` with `["nip70", false]` makes the relay ignore the `-` tag. `backup` returns a `token` that downloads the backup once from `/admin/backup?token=...`, within 60 seconds. Only one backup runs at a time. `import` returns a `token` for `POST /admin/import`, sent as `Authorization: Bearer <token>`. Each request carries up to 8 MiB of JSONL and gets back the number of events `added`, the number of `duplicates`, and the `refused` ones counted by reason. The token expires after 5 minutes without a request. The NIP-43 role and claim methods are not supported.
 
 The page's JavaScript dependencies are bundled in `admin/dist/nostr.js`. That file is committed, so building strfry needs no JavaScript tooling. To update the dependencies, run `npm ci && npm run build` in `admin/`.
+
+### Push notifications
+
+strfry implements [NIP-9a](https://github.com/nostr-protocol/nips/pull/2194) (draft): a client publishes a `kind 30390` push subscription, and the relay sends a `POST` to its `callback` URL for each new event that matches one of its `filter` tags and none of its `ignore` tags. The body is `{"id": ..., "relay": ...}`, plus the whole `event` when the subscription has an `include_event` tag. A push server can then turn it into an FCM, APNs or Web Push notification.
+
+It is on by default once `relay.auth.serviceUrl` is set, and `9a` then shows in the NIP-11 `supported_nips`. The `relay.push` section of the config turns it off and sets the request timeout and the queue size.
+
+* A subscription is refused when its `relay` tag doesn't name one of the `serviceUrl`s, when it has no callback or no valid filter, or when its callback is not an `http://` or `https://` URL.
+* Only the author of a subscription can read it, since its callback URL is a secret.
+* An event is only sent when the subscription's author could read it, as if they had authenticated with NIP-42. A gift wrap, for instance, only goes to the subscription of its recipient.
+* A callback that answers `404` gets its subscription deleted. Other errors are logged and the subscription is kept.
+* Subscriptions are deleted like any event: with a `kind 5` naming them, by expiration (NIP-40), or by a newer version with the same `d` tag.
+* Callbacks that point to loopback, private or link-local addresses are refused, both in the URL and after the DNS lookup. Set `relay.push.allowPrivateCallbacks = true` when the push server runs on the relay's own network. Redirects are not followed.
+* HTTPS certificates are checked against the system CA store.
 
 ### Selecting and Deleting Events
 

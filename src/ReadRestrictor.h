@@ -27,8 +27,13 @@ public:
         return restrictedKinds_;
     }
 
+    // NIP-9a: a push subscription holds its callback URL, so only its author may read it
+    static bool isRestrictedKind(uint64_t kind) {
+        return kind == PUSH_SUBSCRIPTION_KIND || restrictedKinds().contains(kind);
+    }
+
     static bool isFilterGroupFullyRestricted(const NostrFilterGroup &fg) {
-        if (restrictedKinds().empty() || fg.filters.empty()) return false;
+        if (fg.filters.empty()) return false;
         for (const auto& f : fg.filters) {
             if (!isFilterFullyRestricted(f)) return false;
         }
@@ -41,7 +46,7 @@ public:
         for (size_t i = 0; i < filter.kinds->size(); ++i) {
             uint64_t kind = filter.kinds->at(i);
 
-            if (!restrictedKinds().contains(kind)) {
+            if (!isRestrictedKind(kind)) {
                 return false;
             }
         }
@@ -49,28 +54,26 @@ public:
     }
 
     static bool isFilterAllowedToCount(const NostrFilterGroup &fg, Bytes32 pubkey) {
-        if (restrictedKinds().empty()) return true;
-
         bool pubkeyIsNull = pubkey.isNull();
 
         for (const auto &f: fg.filters) {
             if (!f.kinds) continue;
             bool hasSomeRestrictedKind = false;
+            bool hasPushKind = false;
             for (size_t i = 0; i < f.kinds->size(); ++i) {
                 uint64_t kind = f.kinds->at(i);
-                if (restrictedKinds().contains(kind)) {
-                    hasSomeRestrictedKind = true;
-                    break;
-                }
+                if (kind == PUSH_SUBSCRIPTION_KIND) hasPushKind = true;
+                if (isRestrictedKind(kind)) hasSomeRestrictedKind = true;
             }
             if (hasSomeRestrictedKind) {
                 if (pubkeyIsNull) {
                     return false;
                 }
+                bool authorScoped = f.authors && allPubkeysMatch(*f.authors, pubkey);
+                if (hasPushKind && !authorScoped) return false;
                 if (!cfg().relay__auth__restrictReadToInvolvedPubkey) {
                     continue;
                 }
-                bool authorScoped = f.authors && allPubkeysMatch(*f.authors, pubkey);
                 bool pScoped = false;
                 if (auto it = f.tags.find('p'); it != f.tags.end()) {
                     pScoped = allPubkeysMatch(it->second, pubkey);
@@ -93,7 +96,7 @@ public:
 
     // False means the event is public, true that shouldSendToSubscriber must decide
     static bool mayBeRestricted(const PackedEventView &packed) {
-        return restrictedKinds().contains(packed.kind()) || (packed.kind() == 5 && restrictedKinds().contains(1059));
+        return isRestrictedKind(packed.kind()) || (packed.kind() == 5 && restrictedKinds().contains(1059));
     }
 
     // A gift wrap deletion is as private as the wrap, or it would tell the sender when the wrap was deleted
@@ -113,6 +116,8 @@ public:
 
     // Returns true if the event should be sent to the subscriber
     static bool shouldSendToSubscriber(lmdb::txn &txn, uint64_t levId, const PackedEventView &packed, const Bytes32 &subscriberAuthedPubkey) {
+        if (packed.kind() == PUSH_SUBSCRIPTION_KIND) return !subscriberAuthedPubkey.isNull() && subscriberAuthedPubkey == packed.pubkey();
+
         bool giftWrapDeletion = isGiftWrapDeletion(txn, levId, packed);
 
         if (!giftWrapDeletion && !restrictedKinds().contains(packed.kind())) {

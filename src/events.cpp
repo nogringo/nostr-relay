@@ -3,6 +3,7 @@
 #include "events.h"
 #include "jsonParseUtils.h"
 #include "AdminStore.h"
+#include "PushSubscription.h"
 
 
 std::string nostrJsonToPackedEvent(const tao::json::value &v) {
@@ -61,6 +62,10 @@ std::string nostrJsonToPackedEvent(const tao::json::value &v) {
     }
 
     if (kind == 62 && !vanishTargetsThisRelay) throw herr("request to vanish does not target this relay");
+    if (kind == PUSH_SUBSCRIPTION_KIND) {
+        if (!pushEnabled()) throw herr("push subscriptions are not accepted here");
+        PushSubscription{v}; // throws when this relay can't fulfill it
+    }
 
     if (isParamReplaceableKind(kind)) {
         // Append virtual d-tag. Will be overidden by any previous d-tags.

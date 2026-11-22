@@ -45,6 +45,7 @@ RUN \
     libb2 \
     zstd \
     libressl \
+    ca-certificates \
   && rm -rf /var/cache/apk/*
 
 # Create a non-root user for security

@@ -89,6 +89,14 @@ void RelayServer::run() {
         runAdmin(thr);
     });
 
+    tpPushSender.init("PushSender", cfg().relay__numThreads__push, [this](auto &thr){
+        runPushSender(thr);
+    });
+
+    tpPush.init("Push", 1, [this](auto &thr){
+        runPush(thr);
+    });
+
     cronThread = std::thread([this]{
         runCron();
     });

@@ -32,6 +32,8 @@ inline bool isGiftWrapKind(uint64_t kind) {
     return kind == 1059 || kind == 21059;
 }
 
+const uint64_t PUSH_SUBSCRIPTION_KIND = 30390; // NIP-9a
+
 
 inline std::tuple<uint64_t, std::string, std::string> parseATag(std::string_view input) {
     size_t firstColon = input.find(':');

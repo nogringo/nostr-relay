@@ -215,6 +215,31 @@ struct MsgAdmin : NonCopyable {
     MsgAdmin(Var &&msg_) : msg(std::move(msg_)) {}
 };
 
+struct MsgPush : NonCopyable {
+    struct DBChange {
+    };
+
+    struct CallbackGone {
+        uint64_t levId;
+    };
+
+    using Var = std::variant<DBChange, CallbackGone>;
+    Var msg;
+    MsgPush(Var &&msg_) : msg(std::move(msg_)) {}
+};
+
+struct MsgPushSender : NonCopyable {
+    struct Post {
+        uint64_t levId; // of the push subscription
+        std::string callback;
+        std::string payload;
+    };
+
+    using Var = std::variant<Post>;
+    Var msg;
+    MsgPushSender(Var &&msg_) : msg(std::move(msg_)) {}
+};
+
 inline std::string httpResponse(int status, std::string_view contentType, std::string_view content, std::string_view extraHeaders = "") {
     std::string statusText =
         status == 200 ? "OK" :
@@ -258,6 +283,7 @@ struct RelayServer {
     uint64_t startedAt = hoytech::curr_time_s();
     std::atomic<bool> backupRunning = false;
     flat_hash_map<std::string, uint64_t> importTokens; // token -> expiry, admin thread only
+    std::atomic<uint64_t> pendingPushes = 0;
 
     // Thread Pools
 
@@ -268,6 +294,8 @@ struct RelayServer {
     ThreadPool<MsgReqMonitor> tpReqMonitor;
     ThreadPool<MsgNegentropy> tpNegentropy;
     ThreadPool<MsgAdmin> tpAdmin;
+    ThreadPool<MsgPush> tpPush;
+    ThreadPool<MsgPushSender> tpPushSender;
     std::thread cronThread;
     std::thread signalHandlerThread;
 
@@ -299,6 +327,10 @@ struct RelayServer {
     tao::json::value stats();
 
     void streamBackup(uint64_t backupId, std::shared_ptr<BackupStream> stream);
+
+    void runPush(ThreadPool<MsgPush>::Thread &thr);
+
+    void runPushSender(ThreadPool<MsgPushSender>::Thread &thr);
 
     void runCron();
 

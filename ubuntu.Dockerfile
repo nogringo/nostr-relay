@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libzstd1 \
     libflatbuffers1 \
     libb2-1 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user for security

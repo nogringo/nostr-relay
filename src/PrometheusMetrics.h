@@ -115,6 +115,11 @@ public:
     Counter authFailureTotal;
     Gauge authenticatedConnections;
 
+    // NIP-9a push metrics
+    Counter pushSentTotal;
+    Counter pushFailedTotal;
+    Counter pushDroppedTotal;
+
     // Generate Prometheus text format output
     std::string render() const {
         std::ostringstream out;
@@ -189,6 +194,19 @@ public:
         out << "# HELP strfry_authenticated_connections_current Current number of AUTHed connections\n";
         out << "# TYPE strfry_authenticated_connections_current gauge\n";
         out << "strfry_authenticated_connections_current " << authenticatedConnections.get() << "\n";
+
+        // Push metrics
+        out << "# HELP strfry_push_sent_total NIP-9a callback requests answered with a 2xx status\n";
+        out << "# TYPE strfry_push_sent_total counter\n";
+        out << "strfry_push_sent_total " << pushSentTotal.get() << "\n";
+
+        out << "# HELP strfry_push_failed_total NIP-9a callback requests that failed or got another status\n";
+        out << "# TYPE strfry_push_failed_total counter\n";
+        out << "strfry_push_failed_total " << pushFailedTotal.get() << "\n";
+
+        out << "# HELP strfry_push_dropped_total NIP-9a callback requests dropped because relay.push.maxPendingRequests were pending\n";
+        out << "# TYPE strfry_push_dropped_total counter\n";
+        out << "strfry_push_dropped_total " << pushDroppedTotal.get() << "\n";
 
         return out.str();
     }

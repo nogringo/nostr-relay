@@ -37,6 +37,12 @@ node "./test/tests/adminApiTest.js" \
   && pass "./test/tests/adminApiTest.js" \
   || fail "./test/tests/adminApiTest.js failed"
 
+info "running push tests..."
+
+node "./test/tests/pushTest.js" \
+  && pass "./test/tests/pushTest.js" \
+  || fail "./test/tests/pushTest.js failed"
+
 info "Seeding events..."
 
 perl "./test/utils/generate-seed-data.pl" -o - | ./strfry --config ./test/cfgs/test.conf import --no-verify

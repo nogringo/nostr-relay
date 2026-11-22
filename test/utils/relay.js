@@ -13,6 +13,7 @@ export function config(
   relayPort = 40553,
   restrictReadToInvolvedPubkey = true,
   adminPubkeys = "",
+  extraRelayConfig = "",
 ) {
   return `
 db = "${relayDb}/"
@@ -33,6 +34,7 @@ relay {
   admin {
     pubkeys = "${adminPubkeys}"
   }
+${extraRelayConfig}
 
   numThreads {
     ingester = 1

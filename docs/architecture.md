@@ -151,6 +151,14 @@ A backup is streamed by two short-lived threads. One runs the same compacting co
 
 An import from the page arrives as a series of `POST /admin/import` requests, each holding up to 8 MiB of JSONL cut on a line break. The websocket thread hands each one to this thread, which verifies the events, writes them in one transaction and answers with the counts. The browser sends the next batch only once the previous one is stored, so a large file never sits in the relay's memory.
 
+## Push
+
+These threads implement [NIP-9a](https://github.com/nostr-protocol/nips/pull/2194) push subscriptions. Like ReqMonitor, a single Push thread watches the DB file and scans the events added since its last run, so events from `strfry import`, `stream`, `sync` and `router` are pushed too.
+
+Each stored `kind 30390` event is loaded at startup into an [ActiveMonitors](#activemonitors) instance, keyed by the subscription's levId, and new ones are added as they show up in the scan. When an event matches, the thread checks that the subscription is still stored (so a replaced, deleted or expired one never fires), applies its `ignore` filters and the read restrictions for its author, and builds the request body.
+
+The requests go to a pool of PushSender threads (`relay.numThreads.push`). Each one connects, checks the resolved address, sends the `POST` and reads only the response status, all within `relay.push.timeoutSeconds`. When a callback answers `404`, the Push thread deletes the subscription in its own write transaction, unless it is the most recent event stored, in which case it waits for a newer one so the levId is never reused.
+
 ## Cron
 
 This thread is responsible for periodic maintenance operations. Currently this consists of applying a retention-policy, deleting ephemeral events, and deleting banned events that could not be deleted at once because they were the most recent ones stored.
