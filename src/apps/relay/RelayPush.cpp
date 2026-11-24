@@ -21,16 +21,30 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
         Bytes32 pubkey;
         std::string relay;
         std::string callback;
+        std::string host;
         bool includeEvent;
         bool ignoreSelf;
         NostrFilterGroup ignore;
+        uint64_t pending = 0;
+        uint64_t failures = 0; // in a row
+        uint64_t failingSince = 0;
+        uint64_t suspendedUntil = 0;
     };
+
+    struct CallbackHost {
+        uint64_t subscriptions = 0;
+        uint64_t pending = 0;
+        uint64_t failures = 0; // in a row, across its subscriptions
+    };
+
+    using Outcome = MsgPush::PostDone::Outcome;
 
     // Each subscription is a monitor whose connId is the levId of its event
     Decompressor decomp;
     ActiveMonitors monitors;
     flat_hash_map<uint64_t, ActivePush> pushes;
-    std::vector<uint64_t> gone; // answered 404, deleted once they are not the most recent event
+    flat_hash_map<std::string, CallbackHost> hosts;
+    std::vector<uint64_t> gone; // answered 404 or kept failing, deleted once they are not the most recent event
     flat_hash_map<uint64_t, MsgPush::AuthedWrites::Write> authedWrites; // levId -> who sent it, until the scan reaches it
     const SubId subId("push");
     uint64_t currEventId;
@@ -38,24 +52,41 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
     uint64_t nextSender = 0;
     uint64_t lastDropWarning = 0;
 
+    auto maxFailures = []{ return std::max<uint64_t>(cfg().relay__push__maxFailures, 1); };
+
     auto add = [&](lmdb::txn &txn, uint64_t levId, uint64_t latestEventId){
         try {
             PackedEventView packed(lookupEventByLevId(txn, levId).buf);
             PushSubscription sub(tao::json::from_string(getEventJson(txn, decomp, levId)));
+            auto host = HttpUrl::parse(sub.callback).host;
 
             Subscription monitored(levId, subId.str(), std::move(sub.filters));
             monitored.latestEventId = latestEventId;
             if (!monitors.addSub(txn, std::move(monitored), latestEventId)) throw herr("relay.maxSubsPerConnection is 0");
 
-            pushes.try_emplace(levId, ActivePush{ Bytes32(packed.pubkey()), std::move(sub.relay), std::move(sub.callback), sub.includeEvent, sub.ignoreSelf, std::move(sub.ignore) });
+            auto [it, inserted] = pushes.try_emplace(levId, ActivePush{ Bytes32(packed.pubkey()), std::move(sub.relay), std::move(sub.callback), host, sub.includeEvent, sub.ignoreSelf, std::move(sub.ignore) });
+            if (inserted) hosts[host].subscriptions++;
         } catch (std::exception &e) {
             LW << "Ignoring push subscription levId=" << levId << ": " << e.what();
         }
     };
 
+    auto releaseHost = [&](decltype(hosts)::iterator it){
+        if (!it->second.subscriptions && !it->second.pending) hosts.erase(it);
+    };
+
     auto remove = [&](uint64_t levId){
         monitors.removeSub(levId, subId);
-        pushes.erase(levId);
+
+        auto it = pushes.find(levId);
+        if (it == pushes.end()) return;
+
+        if (auto host = hosts.find(it->second.host); host != hosts.end()) {
+            host->second.subscriptions--;
+            releaseHost(host);
+        }
+
+        pushes.erase(it);
     };
 
     auto notify = [&](lmdb::txn &txn, uint64_t pushLevId, uint64_t levId, const PackedEventView &packed, const Bytes32 &authedSender){
@@ -68,12 +99,22 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
             return;
         }
 
-        const auto &push = it->second;
+        auto &push = it->second;
 
         if (!pushEnabled()) return;
         if (push.ignoreSelf && authedSender == push.pubkey) return;
         if (push.ignore.doesMatch(packed)) return;
         if (!ReadRestrictor::shouldSendToSubscriber(txn, levId, packed, push.pubkey)) return;
+
+        // A failing callback gets one request at a time, so it holds at most one PushSender thread
+        auto &host = hosts[push.host];
+        uint64_t subLimit = push.failures ? 1 : cfg().relay__push__maxPendingPerSubscription;
+        uint64_t hostLimit = host.failures >= maxFailures() ? 1 : cfg().relay__push__maxPendingPerHost;
+
+        if (push.suspendedUntil > hoytech::curr_time_s() || push.pending >= subLimit || host.pending >= hostLimit) {
+            PrometheusMetrics::getInstance().pushThrottledTotal.inc();
+            return;
+        }
 
         if (pendingPushes >= cfg().relay__push__maxPendingRequests) {
             PrometheusMetrics::getInstance().pushDroppedTotal.inc();
@@ -92,8 +133,56 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
 
         if (push.includeEvent) payload["event"] = tao::json::from_string(getEventJson(txn, decomp, levId));
 
+        push.pending++;
+        host.pending++;
         pendingPushes++;
-        tpPushSender.dispatch(nextSender++, MsgPushSender{MsgPushSender::Post{pushLevId, push.callback, tao::json::to_string(payload)}});
+        tpPushSender.dispatch(nextSender++, MsgPushSender{MsgPushSender::Post{pushLevId, push.callback, push.host, tao::json::to_string(payload)}});
+    };
+
+    auto postDone = [&](const MsgPush::PostDone &done){
+        if (auto host = hosts.find(done.host); host != hosts.end()) {
+            host->second.pending--;
+            if (done.outcome == Outcome::Failed) host->second.failures++;
+            else if (done.outcome != Outcome::Skipped) host->second.failures = 0;
+            releaseHost(host);
+        }
+
+        auto it = pushes.find(done.levId);
+        if (it == pushes.end()) return;
+
+        auto &push = it->second;
+        push.pending--;
+
+        if (done.outcome == Outcome::Sent) {
+            push.failures = 0;
+            return;
+        }
+
+        if (done.outcome == Outcome::Gone) {
+            remove(done.levId);
+            gone.push_back(done.levId);
+            return;
+        }
+
+        if (done.outcome != Outcome::Failed) return;
+
+        uint64_t now = hoytech::curr_time_s();
+        if (push.failures++ == 0) push.failingSince = now;
+
+        uint64_t deleteAfter = cfg().relay__push__deleteAfterFailingSeconds;
+
+        if (deleteAfter && now - push.failingSince >= deleteAfter) {
+            LI << "Deleting push subscription levId=" << done.levId << ", its callback at " << done.host << " has failed every request for " << (now - push.failingSince) << "s";
+            remove(done.levId);
+            gone.push_back(done.levId);
+            return;
+        }
+
+        if (push.failures < maxFailures()) return;
+
+        uint64_t backoff = std::min<uint64_t>(uint64_t(60) << std::min<uint64_t>(push.failures - maxFailures(), 6), 3600);
+        push.suspendedUntil = now + backoff;
+        LW << "Suspending push subscription levId=" << done.levId << " for " << backoff << "s after " << push.failures << " failed requests in a row to its callback at " << done.host;
     };
 
     {
@@ -112,10 +201,8 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
 
     auto handle = [&](std::deque<MsgPush> newMsgs){
         for (auto &newMsg : newMsgs) {
-            if (auto msg = std::get_if<MsgPush::CallbackGone>(&newMsg.msg)) {
-                if (!pushes.contains(msg->levId)) continue;
-                remove(msg->levId);
-                gone.push_back(msg->levId);
+            if (auto msg = std::get_if<MsgPush::PostDone>(&newMsg.msg)) {
+                postDone(*msg);
             } else if (auto msg = std::get_if<MsgPush::AuthedWrites>(&newMsg.msg)) {
                 for (auto &write : msg->writes) authedWrites.insert_or_assign(write.levId, write);
             }
@@ -141,7 +228,7 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
                 uint64_t numDeleted = deleteEvents(txn, neFilterCache, levIds);
                 txn.commit();
 
-                if (numDeleted) LI << "Deleted " << numDeleted << " push subscriptions whose callback answered 404";
+                if (numDeleted) LI << "Deleted " << numDeleted << " push subscriptions whose callback answered 404 or kept failing";
             }
         }
 
@@ -213,6 +300,38 @@ static void verifyCallback(const std::string &callback, SessionToken::Generator 
     if (res.body != challenge) throw herr("the response is not the challenge");
 }
 
+// An answer after more than half of the timeout is a failure: it holds a PushSender thread nearly as long as no answer
+static MsgPush::PostDone::Outcome postToCallback(const MsgPushSender::Post &post) {
+    using Outcome = MsgPush::PostDone::Outcome;
+    std::string host = "?";
+
+    try {
+        auto url = HttpUrl::parse(post.callback);
+        host = url.hostHeader(); // the path is left out of logs, it often holds a secret token
+
+        uint64_t timeout = cfg().relay__push__timeoutSeconds;
+        auto start = std::chrono::steady_clock::now();
+        int status = httpPost(url, "application/json", post.payload, timeout, cfg().relay__push__allowPrivateCallbacks);
+        auto elapsed = std::chrono::steady_clock::now() - start;
+
+        if (status >= 200 && status < 300) {
+            PrometheusMetrics::getInstance().pushSentTotal.inc();
+            if (elapsed * 2 <= std::chrono::seconds(timeout)) return Outcome::Sent;
+
+            LW << "Push callback at " << host << " took " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << "ms to answer";
+            return Outcome::Failed;
+        }
+
+        PrometheusMetrics::getInstance().pushFailedTotal.inc();
+        LW << "Push callback at " << host << " answered " << status;
+        return status == 404 ? Outcome::Gone : Outcome::Failed;
+    } catch (std::exception &e) {
+        PrometheusMetrics::getInstance().pushFailedTotal.inc();
+        LW << "Push to callback at " << host << " failed: " << e.what();
+        return Outcome::Failed;
+    }
+}
+
 void RelayServer::runPushSender(ThreadPool<MsgPushSender>::Thread &thr) {
     SessionToken::Generator challengeGenerator;
 
@@ -239,27 +358,18 @@ void RelayServer::runPushSender(ThreadPool<MsgPushSender>::Thread &thr) {
             }
 
             auto &post = std::get<MsgPushSender::Post>(newMsg.msg);
-            std::string host = "?";
 
-            try {
-                auto url = HttpUrl::parse(post.callback);
-                host = url.hostHeader(); // the path is left out of logs, it often holds a secret token
-
-                int status = httpPost(url, "application/json", post.payload, cfg().relay__push__timeoutSeconds, cfg().relay__push__allowPrivateCallbacks);
-
-                if (status >= 200 && status < 300) {
-                    PrometheusMetrics::getInstance().pushSentTotal.inc();
-                } else {
-                    PrometheusMetrics::getInstance().pushFailedTotal.inc();
-                    LW << "Push callback at " << host << " answered " << status;
-                    if (status == 404) tpPush.dispatch(0, MsgPush{MsgPush::CallbackGone{post.levId}});
-                }
-            } catch (std::exception &e) {
-                PrometheusMetrics::getInstance().pushFailedTotal.inc();
-                LW << "Push to callback at " << host << " failed: " << e.what();
+            // Queued behind slow callbacks, the subscription may have been deleted or replaced since
+            bool stored;
+            {
+                auto txn = env.txn_ro();
+                stored = !!env.lookup_Event(txn, post.levId);
             }
 
+            auto outcome = stored ? postToCallback(post) : MsgPush::PostDone::Outcome::Skipped;
+
             pendingPushes--;
+            tpPush.dispatch(0, MsgPush{MsgPush::PostDone{post.levId, std::move(post.host), outcome}});
         }
     }
 }

@@ -119,6 +119,7 @@ public:
     Counter pushSentTotal;
     Counter pushFailedTotal;
     Counter pushDroppedTotal;
+    Counter pushThrottledTotal;
 
     // Generate Prometheus text format output
     std::string render() const {
@@ -207,6 +208,10 @@ public:
         out << "# HELP strfry_push_dropped_total NIP-9a callback requests dropped because relay.push.maxPendingRequests were pending\n";
         out << "# TYPE strfry_push_dropped_total counter\n";
         out << "strfry_push_dropped_total " << pushDroppedTotal.get() << "\n";
+
+        out << "# HELP strfry_push_throttled_total NIP-9a callback requests not sent because their subscription was suspended, or it or its callback host had too many requests pending\n";
+        out << "# TYPE strfry_push_throttled_total counter\n";
+        out << "strfry_push_throttled_total " << pushThrottledTotal.get() << "\n";
 
         return out.str();
     }

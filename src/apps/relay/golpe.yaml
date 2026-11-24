@@ -161,6 +161,18 @@ config:
   - name: relay__push__maxPendingRequests
     desc: "Callback requests queued or in flight beyond this number are dropped, and new subscriptions refused"
     default: 10000
+  - name: relay__push__maxPendingPerSubscription
+    desc: "Callback requests one subscription can have queued or in flight. Its events beyond that are not pushed. After a failed request, only one at a time"
+    default: 4
+  - name: relay__push__maxPendingPerHost
+    desc: "Callback requests queued or in flight for all the subscriptions whose callback is on the same host. After maxFailures failed requests in a row to that host, only one at a time"
+    default: 100
+  - name: relay__push__maxFailures
+    desc: "Failed requests in a row after which a subscription is suspended for 1 minute, then twice as long after each new failure, up to 1 hour. A request fails when the callback doesn't answer, answers a status other than 2xx or 404, or answers after more than half of timeoutSeconds"
+    default: 3
+  - name: relay__push__deleteAfterFailingSeconds
+    desc: "A subscription whose callback has failed every request for this long is deleted, as after a 404. 0 never deletes it"
+    default: 86400
 
   - name: relay__negentropy__enabled
     desc: "Support negentropy protocol messages"

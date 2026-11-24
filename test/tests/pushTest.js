@@ -47,8 +47,8 @@ function subscription(key, { d, relay = "wss://relay.test", callback, filters = 
   return sign(key, { kind: 30390, tags });
 }
 
-function relayConfig(pushConfig) {
-  return config(relayDbDir, relayPort, true, "", `\n  push {\n${pushConfig}\n  }\n`);
+function relayConfig(pushConfig, extraRelayConfig = "") {
+  return config(relayDbDir, relayPort, true, "", `\n  push {\n${pushConfig}\n  }\n${extraRelayConfig}`);
 }
 
 async function startRelay(env = {}) {
@@ -71,7 +71,8 @@ async function startRelay(env = {}) {
   };
 }
 
-// GETs are challenges: /deaf/ answers something else, /missing/ answers 404, /chunked/ answers in two chunks
+// GETs are challenges: /deaf/ answers something else, /missing/ answers 404, /chunked/ answers in two chunks.
+// POSTs to /gone/ get a 404, to /fail/ a 500, and to /hang/ no answer at all.
 function startCallbackServer(tls) {
   const received = [];
   const challenges = [];
@@ -92,7 +93,8 @@ function startCallbackServer(tls) {
       }
 
       received.push({ method: req.method, path: req.url, contentType: req.headers["content-type"], body: JSON.parse(body) });
-      res.statusCode = pathname.startsWith("/gone/") ? 404 : 200;
+      if (pathname.startsWith("/hang/")) return;
+      res.statusCode = pathname.startsWith("/gone/") ? 404 : pathname.startsWith("/fail/") ? 500 : 200;
       res.end();
     });
   });
@@ -151,6 +153,16 @@ async function waitForPush(callbacks, eventId, pathPrefix, timeoutMs = 4_000) {
   }
   throw new Error(`no push of ${eventId} to ${pathPrefix}`);
 }
+
+async function waitUntil(cond, what, timeoutMs = 4_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await delay(50);
+  }
+}
+
+const postsTo = (callbacks, pathPrefix) => callbacks.received.filter((r) => r.path.startsWith(pathPrefix));
 
 async function expectNoPush(callbacks, eventId, waitMs = 1_500, pathPrefix = "") {
   await delay(waitMs);
@@ -332,6 +344,98 @@ async function defaultsSuite(callbacks) {
   }
 }
 
+async function failingCallbackSuite(callbacks) {
+  const cb = `http://127.0.0.1:${callbacks.port}`;
+  const silentHost = `http://localhost:${callbacks.port}`; // its own host, so successes on 127.0.0.1 don't reset its failures
+
+  writeConfig(relayConfig([
+    "    allowPrivateCallbacks = true",
+    "    timeoutSeconds = 1",
+    "    maxPendingPerSubscription = 2",
+    "    maxFailures = 2",
+    "    deleteAfterFailingSeconds = 2",
+  ].join("\n")), relayCfgPath);
+  const relay = await startRelay();
+  const client = await connect();
+  const aliceClient = await connect();
+
+  try {
+    await authenticate(aliceClient, alice);
+
+    await expectAccepted(client, subscription(alice, { d: "silent", callback: `${silentHost}/hang/flood`, filters: [{ kinds: [1], "#t": ["flood"] }] }), "a subscription whose callback never answers POSTs");
+    await expectAccepted(client, subscription(alice, { d: "healthy", callback: `${cb}/ok/healthy`, filters: [{ kinds: [1], "#t": ["healthy"] }] }), "a subscription with a healthy callback");
+
+    for (let i = 0; i < 5; i++) await expectAccepted(client, sign(bob, { tags: [["t", "flood"]] }), "a note for the silent callback");
+    const healthyNote = sign(bob, { tags: [["t", "healthy"]] });
+    await expectAccepted(client, healthyNote, "a note for the healthy callback");
+    await waitForPush(callbacks, healthyNote.id, "/ok/healthy");
+    await waitUntil(() => relay.logs().includes("Suspending push subscription"), "the suspension of the silent callback");
+    expect(postsTo(callbacks, "/hang/flood").length === 2, `a silent callback must get maxPendingPerSubscription requests: ${JSON.stringify(postsTo(callbacks, "/hang/flood"))}`);
+
+    const afterSuspension = sign(bob, { tags: [["t", "flood"]] });
+    await expectAccepted(client, afterSuspension, "a note after the suspension");
+    await expectNoPush(callbacks, afterSuspension.id, 500, "/hang/flood");
+    pass("a callback that never answers gets maxPendingPerSubscription requests, then is suspended");
+
+    for (const d of ["h1", "h2", "h3"]) {
+      await expectAccepted(client, subscription(alice, { d, callback: `${silentHost}/hang/${d}`, filters: [{ kinds: [1], "#t": ["same-host"] }] }), "another subscription on the silent host");
+    }
+    await expectAccepted(client, sign(bob, { tags: [["t", "same-host"]] }), "a note for the three subscriptions");
+    await waitUntil(() => postsTo(callbacks, "/hang/h").length > 0, "a request to the silent host");
+    await delay(500);
+    expect(postsTo(callbacks, "/hang/h").length === 1, `a host that failed maxFailures requests in a row must get one at a time: ${JSON.stringify(postsTo(callbacks, "/hang/h"))}`);
+    pass("the subscriptions of a failing host share one request at a time");
+
+    await expectAccepted(client, subscription(alice, { d: "failing", callback: `${cb}/fail/x`, filters: [{ kinds: [1], "#t": ["fail-test"] }] }), "a subscription whose callback answers 500");
+    const firstFailure = sign(bob, { tags: [["t", "fail-test"]] });
+    await expectAccepted(client, firstFailure, "a note for the failing callback");
+    await waitForPush(callbacks, firstFailure.id, "/fail/x");
+    await delay(2_500);
+    const secondFailure = sign(bob, { tags: [["t", "fail-test"]] });
+    await expectAccepted(client, secondFailure, "a note once the callback has failed for deleteAfterFailingSeconds");
+    await waitForPush(callbacks, secondFailure.id, "/fail/x");
+    await delay(500);
+    expect((await query(aliceClient, "failing", { kinds: [30390], authors: [alice.pub], "#d": ["failing"] })).events.length === 0, "a subscription whose callback kept failing must be deleted");
+    pass("a subscription whose callback fails for deleteAfterFailingSeconds is deleted");
+  } catch (e) {
+    throw new Error(`${e.message}\n\nRelay logs:\n${relay.logs()}`);
+  } finally {
+    await Promise.allSettled([client.close(), aliceClient.close()]);
+    await relay.stop();
+  }
+}
+
+// A single PushSender thread, so a request can be made to wait behind a silent callback
+async function staleRequestSuite(callbacks) {
+  const cb = `http://127.0.0.1:${callbacks.port}`;
+
+  writeConfig(relayConfig("    allowPrivateCallbacks = true\n    timeoutSeconds = 2", "  numThreads {\n    push = 1\n  }\n"), relayCfgPath);
+  const relay = await startRelay();
+  const client = await connect();
+  const aliceClient = await connect();
+
+  try {
+    await authenticate(aliceClient, alice);
+
+    await expectAccepted(client, subscription(alice, { d: "blocker", callback: `${cb}/hang/blocker`, filters: [{ kinds: [1], "#t": ["block"] }] }), "a subscription whose callback never answers POSTs");
+    await expectAccepted(client, subscription(alice, { d: "stale", callback: `${cb}/ok/stale`, filters: [{ kinds: [1], "#t": ["stale"] }] }), "a subscription deleted while its request waits");
+
+    await expectAccepted(client, sign(bob, { tags: [["t", "block"]] }), "a note that blocks the only PushSender thread");
+    await waitUntil(() => postsTo(callbacks, "/hang/blocker").length === 1, "the request that blocks the thread");
+    const queued = sign(bob, { tags: [["t", "stale"]] });
+    await expectAccepted(client, queued, "a note whose request waits behind it");
+    await delay(300);
+    await expectAccepted(aliceClient, sign(alice, { kind: 5, tags: [["a", `30390:${alice.pub}:stale`]] }), "a deletion of the waiting subscription");
+    await expectNoPush(callbacks, queued.id, 2_500, "/ok/stale");
+    pass("a request whose subscription was deleted while it waited is not sent");
+  } catch (e) {
+    throw new Error(`${e.message}\n\nRelay logs:\n${relay.logs()}`);
+  } finally {
+    await Promise.allSettled([client.close(), aliceClient.close()]);
+    await relay.stop();
+  }
+}
+
 function selfSignedCert(name, subjectAltName) {
   const keyPath = path.join(workDir, `${name}.key`);
   const certPath = path.join(workDir, `${name}.crt`);
@@ -385,6 +489,10 @@ try {
   await mainSuite(callbacks);
   cleanDb(relayDbDir);
   await defaultsSuite(callbacks);
+  cleanDb(relayDbDir);
+  await failingCallbackSuite(callbacks);
+  cleanDb(relayDbDir);
+  await staleRequestSuite(callbacks);
   cleanDb(relayDbDir);
   await tlsSuite();
 } finally {

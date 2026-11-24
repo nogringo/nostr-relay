@@ -220,8 +220,12 @@ struct MsgPush : NonCopyable {
     struct DBChange {
     };
 
-    struct CallbackGone {
+    struct PostDone {
+        enum class Outcome { Sent, Failed, Gone, Skipped };
+
         uint64_t levId;
+        std::string host;
+        Outcome outcome;
     };
 
     // Sent before the commit, so the Push thread knows them before it can see the events
@@ -235,7 +239,7 @@ struct MsgPush : NonCopyable {
         std::vector<Write> writes;
     };
 
-    using Var = std::variant<DBChange, CallbackGone, AuthedWrites>;
+    using Var = std::variant<DBChange, PostDone, AuthedWrites>;
     Var msg;
     MsgPush(Var &&msg_) : msg(std::move(msg_)) {}
 };
@@ -244,6 +248,7 @@ struct MsgPushSender : NonCopyable {
     struct Post {
         uint64_t levId; // of the push subscription
         std::string callback;
+        std::string host; // of the callback, without the port
         std::string payload;
     };
 
