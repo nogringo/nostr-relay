@@ -1,6 +1,9 @@
+#include <thread>
+
 #include "RelayServer.h"
 
 #include "ActiveMonitors.h"
+#include "AdminStore.h"
 #include "ReadRestrictor.h"
 #include "PushSubscription.h"
 #include "HttpClient.h"
@@ -287,17 +290,59 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
 
 
 // NIP-9a: the callback must echo a random challenge, so a subscription can't aim the relay at a server that never asked for it
-static void verifyCallback(const std::string &callback, SessionToken::Generator &challengeGenerator) {
+static void verifyCallback(const std::string &callback) {
     auto url = HttpUrl::parse(callback);
-    auto challenge = challengeGenerator.get();
+    auto challenge = SessionToken::Generator().get();
 
     if (!url.target.ends_with('?') && !url.target.ends_with('&')) url.target += url.target.find('?') == std::string::npos ? '?' : '&';
     url.target += "challenge=" + challenge;
 
-    auto res = httpGet(url, 1024, cfg().relay__push__timeoutSeconds, cfg().relay__push__allowPrivateCallbacks);
+    auto res = httpGet(url, 1024, cfg().relay__push__verifyTimeoutSeconds, cfg().relay__push__allowPrivateCallbacks);
 
     if (res.status < 200 || res.status >= 300) throw herr("answered ", res.status);
     if (res.body != challenge) throw herr("the response is not the challenge");
+}
+
+// IPv6 clients usually hold a whole /64, so they are counted by network
+static std::string verificationClient(std::string_view ipAddr) {
+    auto ip = adminStore::canonicalIp(ipAddr);
+    if (ip.size() == 16) ip.resize(8);
+    return ip;
+}
+
+// Each check gets its own thread, so a callback that never answers holds up neither the other checks nor the pushes
+void RelayServer::verifyPushCallback(MsgWriter::AddEvent &&ev) {
+    auto idHex = to_hex(PackedEventView(ev.packedStr).id());
+    auto client = verificationClient(ev.ipAddr);
+
+    if (auto refusal = pushVerifications.acquire(client); refusal.size()) {
+        LI << "[" << ev.connId << "] Push subscription " << idHex << " refused: " << refusal;
+        sendOKResponse(ev.connId, idHex, false, refusal);
+        return;
+    }
+
+    auto check = [this, idHex, client](MsgWriter::AddEvent &ev){
+        try {
+            verifyCallback(PushSubscription(tao::json::from_string(ev.jsonStr)).callback);
+            ev.callbackVerified = true;
+        } catch (std::exception &e) {
+            LI << "[" << ev.connId << "] Push subscription " << idHex << " refused, its callback failed the challenge: " << e.what();
+            sendOKResponse(ev.connId, idHex, false, std::string("invalid: callback verification failed: ") + e.what());
+        }
+
+        pushVerifications.release(client);
+        if (ev.callbackVerified) tpWriter.dispatch(0, MsgWriter{std::move(ev)});
+    };
+
+    auto connId = ev.connId;
+
+    try {
+        std::thread([check, ev = std::move(ev)]() mutable { check(ev); }).detach();
+    } catch (std::exception &e) {
+        LE << "Can't start a thread to check a push callback: " << e.what();
+        pushVerifications.release(client);
+        sendOKResponse(connId, idHex, false, "error: could not check the callback, try again later");
+    }
 }
 
 // An answer after more than half of the timeout is a failure: it holds a PushSender thread nearly as long as no answer
@@ -333,30 +378,10 @@ static MsgPush::PostDone::Outcome postToCallback(const MsgPushSender::Post &post
 }
 
 void RelayServer::runPushSender(ThreadPool<MsgPushSender>::Thread &thr) {
-    SessionToken::Generator challengeGenerator;
-
     while (1) {
         auto newMsgs = thr.inbox.pop_all();
 
         for (auto &newMsg : newMsgs) {
-            if (auto verify = std::get_if<MsgPushSender::Verify>(&newMsg.msg)) {
-                auto &ev = verify->event;
-                auto idHex = to_hex(PackedEventView(ev.packedStr).id());
-
-                try {
-                    PushSubscription sub(tao::json::from_string(ev.jsonStr));
-                    verifyCallback(sub.callback, challengeGenerator);
-                    ev.callbackVerified = true;
-                } catch (std::exception &e) {
-                    LI << "[" << ev.connId << "] Push subscription " << idHex << " refused, its callback failed the challenge: " << e.what();
-                    sendOKResponse(ev.connId, idHex, false, std::string("invalid: callback verification failed: ") + e.what());
-                }
-
-                pendingPushes--;
-                if (ev.callbackVerified) tpWriter.dispatch(0, MsgWriter{std::move(ev)});
-                continue;
-            }
-
             auto &post = std::get<MsgPushSender::Post>(newMsg.msg);
 
             // Queued behind slow callbacks, the subscription may have been deleted or replaced since

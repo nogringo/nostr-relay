@@ -252,11 +252,7 @@ struct MsgPushSender : NonCopyable {
         std::string payload;
     };
 
-    struct Verify {
-        MsgWriter::AddEvent event;
-    };
-
-    using Var = std::variant<Post, Verify>;
+    using Var = std::variant<Post>;
     Var msg;
     MsgPushSender(Var &&msg_) : msg(std::move(msg_)) {}
 };
@@ -292,6 +288,33 @@ struct BackupStream {
     bool cancelled = false;
 };
 
+// NIP-9a challenge requests in flight, so that no client can take them all
+struct PushVerifications {
+    std::mutex mutex;
+    uint64_t total = 0;
+    flat_hash_map<std::string, uint64_t> perClient;
+
+    // Empty when the check may start, otherwise the OK message to refuse the subscription with
+    std::string acquire(const std::string &client) {
+        std::lock_guard lock(mutex);
+
+        auto it = perClient.find(client);
+        if (it != perClient.end() && it->second >= cfg().relay__push__maxPendingVerificationsPerIp) return "rate-limited: too many push subscriptions being checked from your address, try again later";
+        if (total >= cfg().relay__push__maxPendingVerifications) return "error: too many push subscriptions being checked, try again later";
+
+        total++;
+        perClient[client]++;
+        return "";
+    }
+
+    void release(const std::string &client) {
+        std::lock_guard lock(mutex);
+
+        total--;
+        if (auto it = perClient.find(client); it != perClient.end() && --it->second == 0) perClient.erase(it);
+    }
+};
+
 struct RelayServerCtx {
     secp256k1_context *secpCtx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
     FilterValidator filterValidator;
@@ -305,6 +328,7 @@ struct RelayServer {
     std::atomic<bool> backupRunning = false;
     flat_hash_map<std::string, uint64_t> importTokens; // token -> expiry, admin thread only
     std::atomic<uint64_t> pendingPushes = 0;
+    PushVerifications pushVerifications;
 
     // Thread Pools
 
@@ -352,6 +376,8 @@ struct RelayServer {
     void runPush(ThreadPool<MsgPush>::Thread &thr);
 
     void runPushSender(ThreadPool<MsgPushSender>::Thread &thr);
+
+    void verifyPushCallback(MsgWriter::AddEvent &&ev);
 
     void announceAuthedWrites(std::vector<EventToWrite> &newEvents);
 

@@ -92,6 +92,9 @@ struct EventToWrite {
 void writeEvents(lmdb::txn &txn, NegentropyFilterCache &neFilterCache, std::vector<EventToWrite> &evs, bool logDeletions = true);
 bool deleteEventBasic(lmdb::txn &txn, uint64_t levId);
 
+// NIP-62: true when a request to vanish has stored events to delete
+bool vanishDeletesEvents(lmdb::txn &txn, const PackedEventView &vanish);
+
 inline bool deletedGiftWrap(lmdb::txn &txn, uint64_t deletionLevId) {
     std::string_view val;
     return env.dbi_GiftWrapDeletion.get(txn, lmdb::to_sv<uint64_t>(deletionLevId), val);

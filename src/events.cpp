@@ -273,15 +273,20 @@ static bool isCoveredByVanish(lmdb::txn &txn, std::string_view pubkey, uint64_t 
     return covered;
 }
 
-static void collectVanishedLevIds(lmdb::txn &txn, const PackedEventView &vanish, std::vector<uint64_t> &levIds) {
-    auto collect = [&](lmdb::dbi &index, const std::string &prefix, const std::function<bool(uint64_t)> &shouldDelete) {
+// Stops as soon as cb returns false
+static void foreachVanishedLevId(lmdb::txn &txn, const PackedEventView &vanish, const std::function<bool(uint64_t)> &cb) {
+    bool stopped = false;
+
+    auto scan = [&](lmdb::dbi &index, const std::string &prefix, const std::function<bool(uint64_t)> &shouldDelete) {
+        if (stopped) return;
+
         env.generic_foreachFull(txn, index, makeKey_StringUint64(prefix, 0), lmdb::to_sv<uint64_t>(0), [&](auto k, auto v) {
             ParsedKey_StringUint64 parsedKey(k);
             if (parsedKey.s != prefix || parsedKey.n > vanish.created_at()) return false;
 
             auto levId = lmdb::from_sv<uint64_t>(v);
-            if (shouldDelete(PackedEventView(lookupEventByLevId(txn, levId).buf).kind())) levIds.push_back(levId);
-            return true;
+            if (shouldDelete(PackedEventView(lookupEventByLevId(txn, levId).buf).kind()) && !cb(levId)) stopped = true;
+            return !stopped;
         });
     };
 
@@ -289,10 +294,28 @@ static void collectVanishedLevIds(lmdb::txn &txn, const PackedEventView &vanish,
 
     // Prior requests to vanish are kept, as bookkeeping and to keep blocking re-broadcasts.
     // Gift wraps signed by the pubkey belong to their recipient (NIP-59).
-    collect(env.dbi_Event__pubkey, pubkey, [](uint64_t kind){ return kind != 62 && !isGiftWrapKind(kind); });
+    scan(env.dbi_Event__pubkey, pubkey, [](uint64_t kind){ return kind != 62 && !isGiftWrapKind(kind); });
 
     // NIP-59: gift wraps addressed to the pubkey
-    collect(env.dbi_Event__tag, "p" + pubkey, isGiftWrapKind);
+    scan(env.dbi_Event__tag, "p" + pubkey, isGiftWrapKind);
+}
+
+static void collectVanishedLevIds(lmdb::txn &txn, const PackedEventView &vanish, std::vector<uint64_t> &levIds) {
+    foreachVanishedLevId(txn, vanish, [&](uint64_t levId){
+        levIds.push_back(levId);
+        return true;
+    });
+}
+
+bool vanishDeletesEvents(lmdb::txn &txn, const PackedEventView &vanish) {
+    bool found = false;
+
+    foreachVanishedLevId(txn, vanish, [&](uint64_t){
+        found = true;
+        return false;
+    });
+
+    return found;
 }
 
 

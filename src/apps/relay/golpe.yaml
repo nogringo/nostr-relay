@@ -159,8 +159,17 @@ config:
     desc: "Time allowed for each callback request, from the DNS lookup to the response"
     default: 10
   - name: relay__push__maxPendingRequests
-    desc: "Callback requests queued or in flight beyond this number are dropped, and new subscriptions refused"
+    desc: "Callback requests queued or in flight beyond this number are dropped"
     default: 10000
+  - name: relay__push__verifyTimeoutSeconds
+    desc: "Time allowed for the challenge sent to the callback of a new subscription, from the DNS lookup to the response"
+    default: 5
+  - name: relay__push__maxPendingVerifications
+    desc: "Challenges in flight beyond which new subscriptions are refused until one completes. Each runs in its own thread, apart from the push threads"
+    default: 100
+  - name: relay__push__maxPendingVerificationsPerIp
+    desc: "Challenges in flight for the subscriptions received from one IP address, or one IPv6 /64 network, beyond which its new subscriptions are refused until one completes"
+    default: 4
   - name: relay__push__maxPendingPerSubscription
     desc: "Callback requests one subscription can have queued or in flight. Its events beyond that are not pushed. After a failed request, only one at a time"
     default: 4

@@ -153,7 +153,7 @@ Bans and lists are stored in the database. They survive restarts, and `strfry im
 
 * Admins can always publish, even when only listed pubkeys can.
 * Under a pubkey allow list, a gift wrap (NIP-59) is accepted when its recipient is on the list, since its author is a throwaway key.
-* Requests to vanish (NIP-62) are always accepted, as NIP-62 requires.
+* A request to vanish (NIP-62) that deletes events here is accepted even from a banned pubkey or one outside the allow lists, and the write policy plugin doesn't see it, as NIP-62 requires. One with nothing to delete is handled like any other event, so it can't be used to store events where its author can't write.
 * A protected event (NIP-70) is accepted from its author once they authenticate with NIP-42, and a repost that embeds one is refused. When NIP-70 is turned off, the relay ignores the `-` tag: these events are treated like any other, and 70 is dropped from the NIP-11 `supported_nips`. `import`, `stream`, `sync` and `router` never check the tag.
 * When the banned event is the most recent one stored, the cron thread deletes it once a newer event arrives, so its database ID is never reused.
 
@@ -169,6 +169,7 @@ It is on by default once `relay.auth.serviceUrl` is set, and `9a` then shows in 
 
 * A subscription is refused when its `relay` tag doesn't name one of the `serviceUrl`s, when it has no callback or no valid filter, or when its callback is not an `http://` or `https://` URL.
 * Before storing a subscription, the relay sends a `GET` to its callback with a random `challenge` query parameter appended, and accepts it only when the answer has a `2xx` status and a body that is exactly that value. This happens after the write policy plugin has accepted the event. Subscriptions brought in by `strfry import`, `sync`, `stream`, `router` or the admin page's import are stored without a challenge.
+* Each challenge runs in its own thread, apart from the requests that push events, and must be answered within `relay.push.verifyTimeoutSeconds` (5 by default). At most `relay.push.maxPendingVerifications` challenges are in flight at once, and `relay.push.maxPendingVerificationsPerIp` for the subscriptions received from one IP address or one IPv6 /64 network. A subscription beyond these limits is refused with a `rate-limited:` or `error:` message, and the client can try again later. Behind a reverse proxy, set `relay.realIpHeader`, or every client counts as the proxy's address.
 * With an `ignore_self` tag, events received over a connection authenticated with NIP-42 as the subscription's author are not pushed: for instance the copy of a NIP-17 message that its sender wraps for themselves.
 * Only the author of a subscription can read it, since its callback URL is a secret.
 * An event is only sent when the subscription's author could read it, as if they had authenticated with NIP-42. A gift wrap, for instance, only goes to the subscription of its recipient.

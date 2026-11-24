@@ -67,8 +67,9 @@ inline bool isAllowedAuthor(lmdb::txn &txn, const PackedEventView &packed) {
 
 // Empty when the event may be stored, otherwise the OK message to reject it with
 inline std::string writeRejection(lmdb::txn &txn, const PackedEventView &packed) {
-    // NIP-62: relays that restrict who can post MUST still honor a request to vanish
-    if (packed.kind() == 62) return "";
+    // NIP-62: relays that restrict who can post MUST still honor a request to vanish.
+    // One with nothing to delete here goes through the usual rules, or anyone could store events.
+    if (packed.kind() == 62 && vanishDeletesEvents(txn, packed)) return "";
 
     if (listContains(txn, env.dbi_BannedEvent, packed.id())) return "blocked: this event is banned";
     if (listContains(txn, env.dbi_AllowedEvent, packed.id())) return "";

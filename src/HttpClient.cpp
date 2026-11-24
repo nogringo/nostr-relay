@@ -11,8 +11,11 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <thread>
 
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -199,6 +202,54 @@ SSL_CTX *tlsContext() {
     return ctx;
 }
 
+using AddrInfo = std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)>;
+
+// getaddrinfo can't be cancelled, so it runs in a thread of its own that is left to finish alone past the deadline
+AddrInfo resolve(const HttpUrl &url, Clock::time_point deadline) {
+    struct Lookup {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool done = false;
+        bool abandoned = false;
+        int err = 0;
+        addrinfo *res = nullptr;
+    };
+
+    auto lookup = std::make_shared<Lookup>();
+
+    std::thread([lookup, host = url.host, port = std::to_string(url.port)]{
+        addrinfo hints = {};
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+
+        addrinfo *res = nullptr;
+        int err = ::getaddrinfo(host.c_str(), port.c_str(), &hints, &res);
+
+        std::lock_guard lock(lookup->mutex);
+
+        if (lookup->abandoned) {
+            if (!err) ::freeaddrinfo(res);
+            return;
+        }
+
+        lookup->err = err;
+        lookup->res = err ? nullptr : res;
+        lookup->done = true;
+        lookup->cv.notify_all();
+    }).detach();
+
+    std::unique_lock lock(lookup->mutex);
+
+    if (!lookup->cv.wait_until(lock, deadline, [&]{ return lookup->done; })) {
+        lookup->abandoned = true;
+        throw herr("can't resolve ", url.host, ": timed out");
+    }
+
+    if (lookup->err) throw herr("can't resolve ", url.host, ": ", gai_strerror(lookup->err));
+
+    return AddrInfo(lookup->res, ::freeaddrinfo);
+}
+
 struct Connection : NonCopyable {
     int fd = -1;
     SSL *ssl = nullptr;
@@ -212,14 +263,8 @@ struct Connection : NonCopyable {
     }
 
     void connect(const HttpUrl &url, bool allowPrivateAddresses) {
-        addrinfo hints = {};
-        hints.ai_family = AF_UNSPEC;
-        hints.ai_socktype = SOCK_STREAM;
-
-        addrinfo *res = nullptr;
-        int err = ::getaddrinfo(url.host.c_str(), std::to_string(url.port).c_str(), &hints, &res);
-        if (err) throw herr("can't resolve ", url.host, ": ", gai_strerror(err));
-        std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)> resGuard(res, ::freeaddrinfo);
+        auto resGuard = resolve(url, deadline);
+        auto *res = resGuard.get();
 
         std::string lastError = "no address";
 

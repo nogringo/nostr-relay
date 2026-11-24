@@ -91,6 +91,15 @@ async function isStored(client, id) {
   return (await query(client, `stored-${id.slice(0, 8)}`, { ids: [id] })).length === 1;
 }
 
+// Also sees the events that need AUTH to read, such as gift wraps
+function isInDatabase(id) {
+  const res = runStrfry(["--config", relayCfgPath, "scan", JSON.stringify({ ids: [id] })], { stdio: ["ignore", "pipe", "pipe"] });
+  expect(res.status === 0, `scan failed: ${res.stderr}`);
+  return res.stdout.includes(id);
+}
+
+const vanish = (key) => sign(key, { kind: 62, tags: [["relay", "ALL_RELAYS"]] });
+
 async function waitForClose(ws, timeoutMs = 4_000) {
   if (ws.readyState === ws.CLOSED) return;
   await new Promise((resolve, reject) => {
@@ -146,6 +155,8 @@ async function authorizationTests() {
 async function pubkeyBanTests(client) {
   const note = sign(alice, { content: "alice before ban" });
   await expectAccepted(client, note, "alice's note");
+  const wrapToAlice = sign(randomKey(), { kind: 1059, tags: [["p", alice.pub]], content: "for alice" });
+  await expectAccepted(client, wrapToAlice, "a gift wrap to alice");
   await expectAccepted(client, sign(bob, { content: "bob keeps the latest levId" }), "bob's note");
 
   await call("banpubkey", [alice.pub, "spam"]);
@@ -153,16 +164,19 @@ async function pubkeyBanTests(client) {
   expect(banned.some((b) => b.pubkey === alice.pub && b.reason === "spam"), "the ban must be listed with its reason");
 
   expect(!(await isStored(client, note.id)), "a banned pubkey's events must be deleted");
+  expect(isInDatabase(wrapToAlice.id), "a ban must keep the gift wraps addressed to the pubkey");
   await expectRejected(client, sign(alice, { content: "alice after ban" }), "blocked:", "a banned pubkey's new event");
 
-  const vanish = sign(alice, { kind: 62, tags: [["relay", "ALL_RELAYS"]] });
-  await expectAccepted(client, vanish, "a banned pubkey's request to vanish");
+  await expectAccepted(client, vanish(alice), "a banned pubkey's request to vanish that deletes a gift wrap");
+  expect(!isInDatabase(wrapToAlice.id), "the request to vanish must delete the gift wrap");
+  await expectRejected(client, vanish(alice), "blocked:", "a banned pubkey's request to vanish with nothing left to delete");
 
   await call("unbanpubkey", [alice.pub]);
   expect((await call("listbannedpubkeys")).length === 0, "unbanpubkey must empty the ban list");
   await expectAccepted(client, sign(alice, { content: "alice after unban" }), "an unbanned pubkey's event");
 
   pass("banpubkey deletes and blocks a pubkey, unbanpubkey lifts the ban");
+  pass("a banned pubkey's request to vanish is accepted only while it has something to delete");
 }
 
 async function eventBanTests(client) {
@@ -205,6 +219,12 @@ async function allowListTests(client) {
   await expectAccepted(client, sign(throwaway, { kind: 1059, tags: [["p", bob.pub]] }), "a gift wrap for an allowed recipient");
   await expectRejected(client, sign(throwaway, { kind: 1059, tags: [["p", alice.pub]] }), "restricted:", "a gift wrap for an outsider");
 
+  await expectRejected(client, vanish(randomKey()), "restricted:", "a request to vanish from an outsider with nothing stored");
+  const aliceNote = (await query(client, "alice-notes", { authors: [alice.pub], kinds: [1] }))[0];
+  expect(aliceNote, "alice must have a note stored before the allow list");
+  await expectAccepted(client, vanish(alice), "a request to vanish from an outsider with stored events");
+  expect(!(await isStored(client, aliceNote.id)), "the outsider's request to vanish must delete its events");
+
   const info = await (await fetch(httpUrl, { headers: { Accept: "application/nostr+json" } })).json();
   expect(info.limitation.restricted_writes === true, "NIP-11 must announce restricted writes");
 
@@ -216,7 +236,7 @@ async function allowListTests(client) {
   await call("unallowpubkey", [bob.pub]);
   await expectAccepted(client, sign(alice, { content: "open again" }), "any pubkey once the allow list is empty");
 
-  pass("allowpubkey turns the relay into an allow list, admins and recipients of gift wraps included");
+  pass("allowpubkey turns the relay into an allow list, admins, recipients of gift wraps and requests to vanish that delete events included");
 }
 
 async function kindTests(client) {
@@ -233,6 +253,7 @@ async function kindTests(client) {
   await expectAccepted(client, sign(bob, { kind: 1 }), "an allowed kind");
   await expectRejected(client, sign(bob, { kind: 7, content: "+" }), "blocked:", "a kind outside the allow list");
   await expectAccepted(client, sign(bob, { kind: 62, tags: [["relay", "wss://relay.test"]] }), "a request to vanish outside the allow list");
+  await expectRejected(client, vanish(randomKey()), "blocked:", "a request to vanish outside the allow list, with nothing to delete");
 
   await call("disallowkind", [1]);
   expect((await call("listallowedkinds")).length === 0, "disallowkind must remove the kind from the allow list");

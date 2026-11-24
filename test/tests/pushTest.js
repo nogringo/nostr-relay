@@ -71,7 +71,7 @@ async function startRelay(env = {}) {
   };
 }
 
-// GETs are challenges: /deaf/ answers something else, /missing/ answers 404, /chunked/ answers in two chunks.
+// GETs are challenges: /deaf/ answers something else, /missing/ answers 404, /chunked/ answers in two chunks, /stall/ never answers.
 // POSTs to /gone/ get a 404, to /fail/ a 500, and to /hang/ no answer at all.
 function startCallbackServer(tls) {
   const received = [];
@@ -86,6 +86,7 @@ function startCallbackServer(tls) {
       if (req.method === "GET") {
         const challenge = searchParams.get("challenge") ?? "";
         challenges.push({ path: req.url, challenge });
+        if (pathname.startsWith("/stall/")) return;
         if (pathname.startsWith("/deaf/")) return res.end("ok");
         if (pathname.startsWith("/missing/")) res.statusCode = 404;
         if (pathname.startsWith("/chunked/")) res.write(challenge.slice(0, 5));
@@ -436,6 +437,78 @@ async function staleRequestSuite(callbacks) {
   }
 }
 
+// Collects the OK of each event, whatever the order they come in
+async function waitForOks(client, events, timeoutMs) {
+  const oks = new Map();
+  const deadline = Date.now() + timeoutMs;
+
+  while (oks.size < events.length) {
+    const msg = await client.nextMessage(Math.max(1, deadline - Date.now()));
+    if (msg[0] === "OK" && events.some((ev) => ev.id === msg[1])) oks.set(msg[1], msg);
+  }
+
+  return events.map((ev) => oks.get(ev.id));
+}
+
+// Challenges to a callback that never answers, sent from addresses given with the realIpHeader.
+// A single PushSender thread, so a challenge that shared it would hold up the pushes.
+async function verificationLimitsSuite(callbacks) {
+  const cb = `http://127.0.0.1:${callbacks.port}`;
+
+  writeConfig(relayConfig([
+    "    allowPrivateCallbacks = true",
+    "    verifyTimeoutSeconds = 2",
+    "    maxPendingVerifications = 4",
+    "    maxPendingVerificationsPerIp = 2",
+  ].join("\n"), '  realIpHeader = "x-real-ip"\n  numThreads {\n    push = 1\n  }\n'), relayCfgPath);
+  const relay = await startRelay();
+
+  const fromAddress = async (ip) => new WsClient(await openWebSocket(wsUrl, 4_000, { headers: { "x-real-ip": ip } }));
+  const clients = await Promise.all(["203.0.113.1", "203.0.113.2", "203.0.113.3", "2001:db8:1:1::1", "2001:db8:1:1::2", "2001:db8:1:1::3"].map(fromAddress));
+  const [first, second, third, v6a, v6b, v6c] = clients;
+
+  try {
+    const filter = { kinds: [1], "#t": ["isolation"] };
+    await expectAccepted(third, subscription(alice, { d: "healthy", callback: `${cb}/ok/healthy`, filters: [filter] }), "a subscription with a healthy callback");
+
+    const stalled = (d) => subscription(alice, { d, callback: `${cb}/stall/${d}`, filters: [{ kinds: [1], "#t": ["never"] }] });
+    const stalledChallenges = () => callbacks.challenges.filter((c) => c.path.startsWith("/stall/")).length;
+    const fromFirst = [stalled("s1"), stalled("s2")];
+    const fromV6 = [stalled("s3"), stalled("s4")];
+    const startedAt = Date.now();
+
+    for (const ev of fromFirst) first.send(["EVENT", ev]);
+    v6a.send(["EVENT", fromV6[0]]);
+    v6b.send(["EVENT", fromV6[1]]);
+    await waitUntil(() => stalledChallenges() === 4, "the four challenges to the silent callback");
+
+    await expectRejected(first, subscription(alice, { d: "more", callback: `${cb}/ok/more`, filters: [filter] }), "rate-limited:", "a third subscription from an address with two challenges in flight");
+    await expectRejected(v6c, subscription(alice, { d: "more", callback: `${cb}/ok/more`, filters: [filter] }), "rate-limited:", "a subscription from a third address of the same IPv6 /64");
+    await expectRejected(second, subscription(alice, { d: "more", callback: `${cb}/ok/more`, filters: [filter] }), "error: too many push subscriptions being checked", "a subscription once maxPendingVerifications challenges are in flight");
+    pass("challenges in flight are capped per address, per IPv6 /64 and in total");
+
+    const note = sign(bob, { tags: [["t", "isolation"]] });
+    await expectAccepted(third, note, "a note for the healthy callback");
+    await waitForPush(callbacks, note.id, "/ok/healthy", 1_500);
+    expect(Date.now() - startedAt < 1_800, `the push must not wait for the challenges in flight, it took ${Date.now() - startedAt}ms`);
+    pass("challenges to a silent callback don't hold up the pushes");
+
+    const oks = [...(await waitForOks(first, fromFirst, 4_000)), ...(await waitForOks(v6a, [fromV6[0]], 4_000)), ...(await waitForOks(v6b, [fromV6[1]], 4_000))];
+    for (const ok of oks) expect(ok[2] === false && ok[3] === "invalid: callback verification failed: timed out", `a challenge to a silent callback must time out: ${JSON.stringify(ok)}`);
+    expect(Date.now() - startedAt < 3_500, `the challenges must give up after verifyTimeoutSeconds, they took ${Date.now() - startedAt}ms`);
+    expect(stalledChallenges() === 4, "a refused subscription must not get a challenge");
+
+    await expectAccepted(first, subscription(alice, { d: "after", callback: `${cb}/ok/after`, filters: [filter] }), "a subscription once the challenges of its address gave up");
+    await expectAccepted(second, subscription(alice, { d: "more", callback: `${cb}/ok/more`, filters: [filter] }), "a subscription once the challenges in flight gave up");
+    pass("challenges give up after verifyTimeoutSeconds and free their place");
+  } catch (e) {
+    throw new Error(`${e.message}\n\nRelay logs:\n${relay.logs()}`);
+  } finally {
+    await Promise.allSettled(clients.map((c) => c.close()));
+    await relay.stop();
+  }
+}
+
 function selfSignedCert(name, subjectAltName) {
   const keyPath = path.join(workDir, `${name}.key`);
   const certPath = path.join(workDir, `${name}.crt`);
@@ -493,6 +566,8 @@ try {
   await failingCallbackSuite(callbacks);
   cleanDb(relayDbDir);
   await staleRequestSuite(callbacks);
+  cleanDb(relayDbDir);
+  await verificationLimitsSuite(callbacks);
   cleanDb(relayDbDir);
   await tlsSuite();
 } finally {

@@ -37,6 +37,12 @@ node "./test/tests/adminApiTest.js" \
   && pass "./test/tests/adminApiTest.js" \
   || fail "./test/tests/adminApiTest.js failed"
 
+info "running vanish policy tests..."
+
+node "./test/tests/vanishPolicyTest.js" \
+  && pass "./test/tests/vanishPolicyTest.js" \
+  || fail "./test/tests/vanishPolicyTest.js failed"
+
 info "running push tests..."
 
 node "./test/tests/pushTest.js" \

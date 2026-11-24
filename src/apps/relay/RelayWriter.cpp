@@ -45,19 +45,19 @@ void RelayServer::runWriter(ThreadPool<MsgWriter>::Thread &thr) {
                 const std::string &plugin = cfg().relay__writePolicy__plugin;
                 uint64_t kind = PackedEventView(msg->packedStr).kind();
 
-                // NIP-62: relays that restrict who can post MUST still honor a request to vanish
-                auto res = kind == 62 || msg->callbackVerified
+                // NIP-62: relays that restrict who can post MUST still honor a request to vanish, when it has something to delete
+                bool honoredVanish = kind == 62 && [&]{
+                    auto txn = env.txn_ro();
+                    return vanishDeletesEvents(txn, PackedEventView(msg->packedStr));
+                }();
+
+                auto res = honoredVanish || msg->callbackVerified
                     ? PluginEventSifterResult::Accept
                     : writePolicyPlugin.acceptEvent(plugin, plugin.empty() ? tao::json::empty_object : tao::json::from_string(msg->jsonStr), sourceType, msg->ipAddr, msg->authed, okMsg);
 
                 if (res == PluginEventSifterResult::Accept && kind == PUSH_SUBSCRIPTION_KIND && !msg->callbackVerified) {
                     // NIP-9a: after the write policy, so the relay only sends challenges for subscriptions it would store
-                    if (pendingPushes >= cfg().relay__push__maxPendingRequests) {
-                        sendOKResponse(msg->connId, to_hex(PackedEventView(msg->packedStr).id()), false, "error: too many callback requests pending, try again later");
-                    } else {
-                        pendingPushes++;
-                        tpPushSender.dispatch(msg->connId, MsgPushSender{MsgPushSender::Verify{std::move(*msg)}});
-                    }
+                    verifyPushCallback(std::move(*msg));
                 } else if (res == PluginEventSifterResult::Accept) {
                     newEvents.emplace_back(std::move(msg->packedStr), std::move(msg->jsonStr), msg);
                 } else {
