@@ -4,6 +4,8 @@
 
 strfry is a relay for the [nostr protocol](https://github.com/nostr-protocol/nostr)
 
+This repository is a modified version of [strfry](https://github.com/hoytech/strfry) by Doug Hoyte, changed since 2026-11-21. The modifications are the commits that follow `4cd3cf6` in the git history.
+
 * Supports most applicable NIPs: 1, 2, 4, 9, 11, 28, 40, 42, 45, 59, 62, 70, 77, 86, 9a
 * No external database required: All data is stored locally on the filesystem in LMDB
 * Hot reloading of config file: No server restart needed for many config param changes
