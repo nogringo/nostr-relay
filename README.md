@@ -139,6 +139,16 @@ strfry can be managed from a browser at `https://my-relay.com/admin`, or by any 
 
 Each request is authorized with a [NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md) event signed by one of these pubkeys, whose `u` tag must name the relay's `serviceUrl`. The page signs them with a browser extension (NIP-07) or a remote signer (NIP-46, through a `bunker://` link or a `nostrconnect://` code).
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/admin-overview-dark.png">
+  <img alt="The Overview tab of the admin page: activity figures and stored events by kind" src="docs/screenshots/admin-overview-light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/admin-moderation-dark.png">
+  <img alt="The Moderation tab of the admin page: reported events, each with Keep, Ban event and Ban author buttons" src="docs/screenshots/admin-moderation-light.png">
+</picture>
+
 From the page you can:
 
 * See the relay's activity: stored events by kind, database size, connections.
