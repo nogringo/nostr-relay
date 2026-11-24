@@ -4,7 +4,7 @@
 
 strfry is a relay for the [nostr protocol](https://github.com/nostr-protocol/nostr)
 
-* Supports most applicable NIPs: 1, 2, 4, 9, 11, 28, 40, 42, 45, 70, 77
+* Supports most applicable NIPs: 1, 2, 4, 9, 11, 28, 40, 42, 45, 59, 62, 70, 77, 86, 9a
 * No external database required: All data is stored locally on the filesystem in LMDB
 * Hot reloading of config file: No server restart needed for many config param changes
 * Zero downtime restarts, for upgrading binary without impacting users
@@ -165,7 +165,7 @@ The page's JavaScript dependencies are bundled in `admin/dist/nostr.js`. That fi
 
 strfry implements [NIP-9a](https://github.com/nostr-protocol/nips/pull/2194) (draft): a client publishes a `kind 30390` push subscription, and the relay sends a `POST` to its `callback` URL for each new event that matches one of its `filter` tags and none of its `ignore` tags. The body is `{"id": ..., "relay": ...}`, plus the whole `event` when the subscription has an `include_event` tag. A push server can then turn it into an FCM, APNs or Web Push notification.
 
-It is on by default once `relay.auth.serviceUrl` is set, and `9a` then shows in the NIP-11 `supported_nips`. The `relay.push` section of the config turns it off and sets the request timeout, the queue size and the limits below.
+It is on by default once `relay.auth.serviceUrl` is set, and `9a` then shows in the NIP-11 `supported_nips`. It is a string, as NIP-9a requires, although NIP-11 defines `supported_nips` as integers: a client that parses the field strictly as integers may fail to read the whole document. The `relay.push` section of the config turns it off and sets the request timeout, the queue size and the limits below.
 
 * A subscription is refused when its `relay` tag doesn't name one of the `serviceUrl`s, when it has no callback or no valid filter, or when its callback is not an `http://` or `https://` URL.
 * Before storing a subscription, the relay sends a `GET` to its callback with a random `challenge` query parameter appended, and accepts it only when the answer has a `2xx` status and a body that is exactly that value. This happens after the write policy plugin has accepted the event. Subscriptions brought in by `strfry import`, `sync`, `stream`, `router` or the admin page's import are stored without a challenge.

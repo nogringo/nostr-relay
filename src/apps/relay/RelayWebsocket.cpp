@@ -182,7 +182,7 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
 
             tao::json::value nip11 = tao::json::value({
                 { "supported_nips", supportedNips(info) },
-                { "software", "git+https://github.com/hoytech/strfry.git" },
+                { "software", "git+https://github.com/nogringo/nostr-relay.git" },
                 { "version", APP_GIT_VERSION },
                 { "negentropy", negentropy::PROTOCOL_VERSION - 0x60 },
                 { "limitation", tao::json::value({
@@ -281,8 +281,8 @@ void RelayServer::runWebsocket(ThreadPool<MsgWebsocket>::Thread &thr) {
                 { "software", tao::json::value({
                     { "name", "strfry" },
                     { "version", APP_GIT_VERSION },
-                    { "repository", "https://github.com/hoytech/strfry"},
-                    { "homepage", "https://github.com/hoytech/strfry"},
+                    { "repository", "https://github.com/nogringo/nostr-relay"},
+                    { "homepage", "https://github.com/nogringo/nostr-relay"},
                 }) },
                 { "protocols", tao::json::value::array({
                     "nostr",
