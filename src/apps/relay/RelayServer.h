@@ -103,6 +103,7 @@ struct MsgWriter : NonCopyable {
         std::string packedStr;
         std::string jsonStr;
         Bytes32 authed;
+        bool callbackVerified = false; // NIP-9a subscription back from its challenge, already through the write policy
     };
 
     struct CloseConn {
@@ -223,7 +224,18 @@ struct MsgPush : NonCopyable {
         uint64_t levId;
     };
 
-    using Var = std::variant<DBChange, CallbackGone>;
+    // Sent before the commit, so the Push thread knows them before it can see the events
+    struct AuthedWrites {
+        struct Write {
+            uint64_t levId;
+            Bytes32 id;
+            Bytes32 authed;
+        };
+
+        std::vector<Write> writes;
+    };
+
+    using Var = std::variant<DBChange, CallbackGone, AuthedWrites>;
     Var msg;
     MsgPush(Var &&msg_) : msg(std::move(msg_)) {}
 };
@@ -235,7 +247,11 @@ struct MsgPushSender : NonCopyable {
         std::string payload;
     };
 
-    using Var = std::variant<Post>;
+    struct Verify {
+        MsgWriter::AddEvent event;
+    };
+
+    using Var = std::variant<Post, Verify>;
     Var msg;
     MsgPushSender(Var &&msg_) : msg(std::move(msg_)) {}
 };
@@ -331,6 +347,8 @@ struct RelayServer {
     void runPush(ThreadPool<MsgPush>::Thread &thr);
 
     void runPushSender(ThreadPool<MsgPushSender>::Thread &thr);
+
+    void announceAuthedWrites(std::vector<EventToWrite> &newEvents);
 
     void runCron();
 

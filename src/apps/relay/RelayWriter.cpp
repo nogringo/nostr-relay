@@ -2,6 +2,7 @@
 
 #include "PluginEventSifter.h"
 #include "PrometheusMetrics.h"
+#include "PushSubscription.h"
 
 
 void RelayServer::runWriter(ThreadPool<MsgWriter>::Thread &thr) {
@@ -42,13 +43,22 @@ void RelayServer::runWriter(ThreadPool<MsgWriter>::Thread &thr) {
                 EventSourceType sourceType = msg->ipAddr.size() == 4 ? EventSourceType::IP4 : EventSourceType::IP6;
                 std::string okMsg;
                 const std::string &plugin = cfg().relay__writePolicy__plugin;
+                uint64_t kind = PackedEventView(msg->packedStr).kind();
 
                 // NIP-62: relays that restrict who can post MUST still honor a request to vanish
-                auto res = PackedEventView(msg->packedStr).kind() == 62
+                auto res = kind == 62 || msg->callbackVerified
                     ? PluginEventSifterResult::Accept
                     : writePolicyPlugin.acceptEvent(plugin, plugin.empty() ? tao::json::empty_object : tao::json::from_string(msg->jsonStr), sourceType, msg->ipAddr, msg->authed, okMsg);
 
-                if (res == PluginEventSifterResult::Accept) {
+                if (res == PluginEventSifterResult::Accept && kind == PUSH_SUBSCRIPTION_KIND && !msg->callbackVerified) {
+                    // NIP-9a: after the write policy, so the relay only sends challenges for subscriptions it would store
+                    if (pendingPushes >= cfg().relay__push__maxPendingRequests) {
+                        sendOKResponse(msg->connId, to_hex(PackedEventView(msg->packedStr).id()), false, "error: too many callback requests pending, try again later");
+                    } else {
+                        pendingPushes++;
+                        tpPushSender.dispatch(msg->connId, MsgPushSender{MsgPushSender::Verify{std::move(*msg)}});
+                    }
+                } else if (res == PluginEventSifterResult::Accept) {
                     newEvents.emplace_back(std::move(msg->packedStr), std::move(msg->jsonStr), msg);
                 } else {
                     PackedEventView packed(msg->packedStr);
@@ -69,6 +79,7 @@ void RelayServer::runWriter(ThreadPool<MsgWriter>::Thread &thr) {
             auto t0 = std::chrono::steady_clock::now();
             auto txn = env.txn_rw();
             writeEvents(txn, neFilterCache, newEvents);
+            if (pushEnabled()) announceAuthedWrites(newEvents);
             txn.commit();
             auto t1 = std::chrono::steady_clock::now();
             auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
@@ -134,4 +145,19 @@ void RelayServer::runWriter(ThreadPool<MsgWriter>::Thread &thr) {
             sendOKResponse(addEventMsg->connId, eventIdHex, written, message);
         }
     }
+}
+
+// NIP-9a ignore_self: sent before the commit, so the Push thread never sees one of these events without knowing who sent it
+void RelayServer::announceAuthedWrites(std::vector<EventToWrite> &newEvents) {
+    MsgPush::AuthedWrites authedWrites;
+
+    for (auto &newEvent : newEvents) {
+        auto *addEventMsg = static_cast<MsgWriter::AddEvent*>(newEvent.userData);
+
+        if (newEvent.status == EventWriteStatus::Written && !addEventMsg->authed.isNull()) {
+            authedWrites.writes.push_back({ newEvent.levId, Bytes32(newEvent.id()), addEventMsg->authed });
+        }
+    }
+
+    if (authedWrites.writes.size()) tpPush.dispatch(0, MsgPush{std::move(authedWrites)});
 }

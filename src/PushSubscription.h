@@ -39,6 +39,7 @@ struct PushSubscription : NonCopyable {
     std::string relay;
     std::string callback;
     bool includeEvent = false;
+    bool ignoreSelf = false;
     NostrFilterGroup filters;
     NostrFilterGroup ignore;
 
@@ -51,6 +52,11 @@ struct PushSubscription : NonCopyable {
 
             if (name == "include_event") {
                 includeEvent = true;
+                continue;
+            }
+
+            if (name == "ignore_self") {
+                ignoreSelf = true;
                 continue;
             }
 

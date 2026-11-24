@@ -127,6 +127,8 @@ void RelayServer::ingesterProcessEvent(lmdb::txn &txn, RelayServerCtx &rsctx, ui
     PackedEventView packed(packedStr);
     Bytes32 authedPubkey;
 
+    if (auto it = rsctx.connIdToAuthSession.find(connId); it != rsctx.connIdToAuthSession.end()) authedPubkey = it->second.authed;
+
     if (adminStore::setting(txn, "nip70")) {
         // discard reposts that embed protected events
         if (packed.kind() == 6 || packed.kind() == 16) {
@@ -195,7 +197,6 @@ void RelayServer::ingesterProcessEvent(lmdb::txn &txn, RelayServerCtx &rsctx, ui
             }
 
             // otherwise we proceed to accept the event
-            authedPubkey = as.authed;
         }
     }
 

@@ -37,12 +37,13 @@ function sign(key, { kind = 1, tags = [], content = "" }) {
   return finalizeEvent({ kind, tags, content, created_at: ts++ }, hexToBytes(key.sec));
 }
 
-function subscription(key, { d, relay = "wss://relay.test", callback, filters = [], ignore = [], includeEvent = false }) {
+function subscription(key, { d, relay = "wss://relay.test", callback, filters = [], ignore = [], includeEvent = false, ignoreSelf = false }) {
   const tags = [["d", d], ["relay", relay]];
   for (const f of filters) tags.push(["filter", typeof f === "string" ? f : JSON.stringify(f)]);
   for (const f of ignore) tags.push(["ignore", JSON.stringify(f)]);
   if (callback !== undefined) tags.push(["callback", callback]);
   if (includeEvent) tags.push(["include_event"]);
+  if (ignoreSelf) tags.push(["ignore_self"]);
   return sign(key, { kind: 30390, tags });
 }
 
@@ -70,21 +71,34 @@ async function startRelay(env = {}) {
   };
 }
 
+// GETs are challenges: /deaf/ answers something else, /missing/ answers 404, /chunked/ answers in two chunks
 function startCallbackServer(tls) {
   const received = [];
+  const challenges = [];
 
   const server = (tls ? https : http).createServer(tls ?? {}, (req, res) => {
     let body = "";
     req.on("data", (d) => (body += d));
     req.on("end", () => {
+      const { pathname, searchParams } = new URL(req.url, "http://callback");
+
+      if (req.method === "GET") {
+        const challenge = searchParams.get("challenge") ?? "";
+        challenges.push({ path: req.url, challenge });
+        if (pathname.startsWith("/deaf/")) return res.end("ok");
+        if (pathname.startsWith("/missing/")) res.statusCode = 404;
+        if (pathname.startsWith("/chunked/")) res.write(challenge.slice(0, 5));
+        return res.end(challenge.slice(pathname.startsWith("/chunked/") ? 5 : 0));
+      }
+
       received.push({ method: req.method, path: req.url, contentType: req.headers["content-type"], body: JSON.parse(body) });
-      res.statusCode = req.url.startsWith("/gone/") ? 404 : 200;
+      res.statusCode = pathname.startsWith("/gone/") ? 404 : 200;
       res.end();
     });
   });
 
   return new Promise((resolve) => {
-    server.listen(0, "127.0.0.1", () => resolve({ server, received, port: server.address().port }));
+    server.listen(0, "127.0.0.1", () => resolve({ server, received, challenges, port: server.address().port }));
   });
 }
 
@@ -138,10 +152,10 @@ async function waitForPush(callbacks, eventId, pathPrefix, timeoutMs = 4_000) {
   throw new Error(`no push of ${eventId} to ${pathPrefix}`);
 }
 
-async function expectNoPush(callbacks, eventId, waitMs = 1_500) {
+async function expectNoPush(callbacks, eventId, waitMs = 1_500, pathPrefix = "") {
   await delay(waitMs);
-  const found = callbacks.received.filter((r) => r.body.id === eventId);
-  expect(found.length === 0, `${eventId} must not be pushed: ${JSON.stringify(found)}`);
+  const found = callbacks.received.filter((r) => r.body.id === eventId && r.path.startsWith(pathPrefix));
+  expect(found.length === 0, `${eventId} must not be pushed to ${pathPrefix || "any callback"}: ${JSON.stringify(found)}`);
 }
 
 async function mainSuite(callbacks) {
@@ -170,8 +184,22 @@ async function mainSuite(callbacks) {
     await expectRejected(observer, subscription(alice, { d: "x", callback: `${cb}/ok/x`, filters: [{ search: "nostr" }] }), "invalid: bad filter tag", "a subscription with an unsupported filter");
     pass("subscriptions the relay can't fulfill are rejected");
 
+    await expectRejected(observer, subscription(alice, { d: "x", callback: `${cb}/deaf/x`, filters: [filter] }), "invalid: callback verification failed: the response is not the challenge", "a callback that doesn't echo the challenge");
+    await expectRejected(observer, subscription(alice, { d: "x", callback: `${cb}/missing/x`, filters: [filter] }), "invalid: callback verification failed: answered 404", "a callback that answers the challenge with 404");
+    await expectRejected(observer, subscription(alice, { d: "x", callback: "http://127.0.0.1:1/x", filters: [filter] }), "invalid: callback verification failed: can't connect to 127.0.0.1", "an unreachable callback");
+    expect((await query(aliceClient, "refused", { kinds: [30390], authors: [alice.pub], "#d": ["x"] })).events.length === 0, "a subscription that failed the challenge must not be stored");
+    pass("subscriptions whose callback fails the challenge are rejected");
+
+    await expectAccepted(observer, subscription(alice, { d: "chunked", callback: `${cb}/chunked/x`, filters: [{ kinds: [1], "#t": ["never"] }] }), "a callback that echoes the challenge in chunks");
+    await expectAccepted(observer, subscription(alice, { d: "query", callback: `${cb}/ok/query?token=abc`, filters: [{ kinds: [1], "#t": ["never"] }] }), "a callback with a query string");
+    const queryChallenge = callbacks.challenges.find((c) => c.path.startsWith("/ok/query?"));
+    expect(queryChallenge && queryChallenge.path === `/ok/query?token=abc&challenge=${queryChallenge.challenge}` && queryChallenge.challenge.length >= 20, `the challenge must be appended to the query: ${JSON.stringify(queryChallenge)}`);
+    pass("the challenge is appended to the callback, and a chunked answer is read");
+
     const notes = subscription(alice, { d: "notes", callback: `${cb}/ok/notes`, filters: [filter], ignore: [{ "#t": ["muted"] }], includeEvent: true });
     await expectAccepted(observer, notes, "a valid subscription");
+    const notesChallenge = callbacks.challenges.find((c) => c.path.startsWith("/ok/notes?"));
+    expect(notesChallenge && notesChallenge.path === `/ok/notes?challenge=${notesChallenge.challenge}`, `the relay must send a challenge before accepting: ${JSON.stringify(callbacks.challenges)}`);
 
     const anonymous = await query(observer, "anon", { kinds: [30390] });
     expect(anonymous.closed && anonymous.closed[2].startsWith("auth-required:"), `reading push subscriptions must require AUTH: ${JSON.stringify(anonymous)}`);
@@ -216,6 +244,19 @@ async function mainSuite(callbacks) {
     await waitForPush(callbacks, wrapToAlice.id, "/ok/wraps");
     await expectNoPush(callbacks, wrapToBob.id, 0);
     pass("events are only pushed to subscribers allowed to read them");
+
+    await expectAccepted(observer, subscription(alice, { d: "dms", callback: `${cb}/ok/dms`, filters: [{ kinds: [1059], "#p": [alice.pub] }], ignoreSelf: true }), "a gift wrap subscription with ignore_self");
+    const selfCopy = sign(throwaway, { kind: 1059, tags: [["p", alice.pub]], content: "alice's own copy" });
+    const wrapFromBob = sign(throwaway, { kind: 1059, tags: [["p", alice.pub]], content: "from bob" });
+    const unauthedWrap = sign(throwaway, { kind: 1059, tags: [["p", alice.pub]], content: "from anyone" });
+    await expectAccepted(aliceClient, selfCopy, "a gift wrap published over alice's connection");
+    await expectAccepted(bobClient, wrapFromBob, "a gift wrap published over bob's connection");
+    await expectAccepted(observer, unauthedWrap, "a gift wrap published without AUTH");
+    await waitForPush(callbacks, wrapFromBob.id, "/ok/dms");
+    await waitForPush(callbacks, unauthedWrap.id, "/ok/dms");
+    await waitForPush(callbacks, selfCopy.id, "/ok/wraps");
+    await expectNoPush(callbacks, selfCopy.id, 500, "/ok/dms");
+    pass("ignore_self skips events received over the author's authenticated connection");
 
     await expectAccepted(observer, subscription(alice, { d: "notes", callback: `${cb}/ok/notes-v2`, filters: [{ kinds: [1], "#t": ["push-test-2"] }] }), "a replacing subscription");
     const oldFilter = sign(bob, { tags: [["t", "push-test"]] });
@@ -271,11 +312,8 @@ async function defaultsSuite(callbacks) {
     await expectRejected(client, subscription(alice, { d: "v6", callback: `http://[::1]:${callbacks.port}/ok/v6`, filters: [filter] }), "invalid: callback is not a public address", "a loopback IPv6 callback");
     await expectRejected(client, subscription(alice, { d: "lan", callback: "https://192.168.1.10/ok/lan", filters: [filter] }), "invalid: callback is not a public address", "a private network callback");
 
-    await expectAccepted(client, subscription(alice, { d: "name", callback: `http://localhost:${callbacks.port}/ok/name`, filters: [filter] }), "a callback whose host is a name");
-    const note = sign(bob, { tags: [["t", "private-test"]] });
-    await expectAccepted(client, note, "a matching note");
-    await expectNoPush(callbacks, note.id);
-    expect(relay.logs().includes("refusing to connect to a non-public address"), "the relay must refuse to connect to a name that resolves to a private address");
+    await expectRejected(client, subscription(alice, { d: "name", callback: `http://localhost:${callbacks.port}/ok/name`, filters: [filter] }), "invalid: callback verification failed: can't connect to localhost: refusing to connect to a non-public address", "a callback whose name resolves to a private address");
+    expect(!callbacks.challenges.some((c) => c.path.startsWith("/ok/name")), "the relay must not reach a callback that resolves to a private address");
     pass("callbacks on private addresses are refused by default");
 
     writeConfig(relayConfig("    enabled = false"), relayCfgPath);
@@ -322,17 +360,14 @@ async function tlsSuite() {
     const filter = { kinds: [1], "#t": ["tls-test"] };
     await expectAccepted(client, subscription(alice, { d: "name", callback: `https://localhost:${good.port}/ok/name`, filters: [filter] }), "an https callback");
     await expectAccepted(client, subscription(alice, { d: "ip", callback: `https://127.0.0.1:${good.port}/ok/ip`, filters: [filter] }), "an https callback on an IP address");
-    await expectAccepted(client, subscription(alice, { d: "mismatch", callback: `https://localhost:${mismatched.port}/ok/mismatch`, filters: [filter] }), "an https callback with a certificate for another name");
+    await expectRejected(client, subscription(alice, { d: "mismatch", callback: `https://localhost:${mismatched.port}/ok/mismatch`, filters: [filter] }), "invalid: callback verification failed: TLS: ", "an https callback with a certificate for another name");
+    pass("a certificate for another name is refused");
 
     const note = sign(bob, { tags: [["t", "tls-test"]] });
     await expectAccepted(client, note, "a matching note");
     await waitForPush(good, note.id, "/ok/name");
     await waitForPush(good, note.id, "/ok/ip");
     pass("events are POSTed over https to verified hosts");
-
-    await expectNoPush(mismatched, note.id);
-    expect(relay.logs().includes("TLS: "), "the relay must log the certificate failure");
-    pass("a certificate for another name is refused");
   } catch (e) {
     throw new Error(`${e.message}\n\nRelay logs:\n${relay.logs()}`);
   } finally {

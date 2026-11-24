@@ -168,6 +168,8 @@ strfry implements [NIP-9a](https://github.com/nostr-protocol/nips/pull/2194) (dr
 It is on by default once `relay.auth.serviceUrl` is set, and `9a` then shows in the NIP-11 `supported_nips`. The `relay.push` section of the config turns it off and sets the request timeout and the queue size.
 
 * A subscription is refused when its `relay` tag doesn't name one of the `serviceUrl`s, when it has no callback or no valid filter, or when its callback is not an `http://` or `https://` URL.
+* Before storing a subscription, the relay sends a `GET` to its callback with a random `challenge` query parameter appended, and accepts it only when the answer has a `2xx` status and a body that is exactly that value. This happens after the write policy plugin has accepted the event. Subscriptions brought in by `strfry import`, `sync`, `stream`, `router` or the admin page's import are stored without a challenge.
+* With an `ignore_self` tag, events received over a connection authenticated with NIP-42 as the subscription's author are not pushed: for instance the copy of a NIP-17 message that its sender wraps for themselves.
 * Only the author of a subscription can read it, since its callback URL is a secret.
 * An event is only sent when the subscription's author could read it, as if they had authenticated with NIP-42. A gift wrap, for instance, only goes to the subscription of its recipient.
 * A callback that answers `404` gets its subscription deleted. Other errors are logged and the subscription is kept.

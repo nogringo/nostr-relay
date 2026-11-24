@@ -61,6 +61,15 @@ void RelayServer::run() {
         if (s != 0) throw herr("Unable to set sigmask: ", strerror(errno));
     }
 
+    // Before the Writer, which dispatches to both
+    tpPushSender.init("PushSender", cfg().relay__numThreads__push, [this](auto &thr){
+        runPushSender(thr);
+    });
+
+    tpPush.init("Push", 1, [this](auto &thr){
+        runPush(thr);
+    });
+
     tpWebsocket.init("Websocket", 1, [this](auto &thr){
         runWebsocket(thr);
     });
@@ -87,14 +96,6 @@ void RelayServer::run() {
 
     tpAdmin.init("Admin", 1, [this](auto &thr){
         runAdmin(thr);
-    });
-
-    tpPushSender.init("PushSender", cfg().relay__numThreads__push, [this](auto &thr){
-        runPushSender(thr);
-    });
-
-    tpPush.init("Push", 1, [this](auto &thr){
-        runPush(thr);
     });
 
     cronThread = std::thread([this]{

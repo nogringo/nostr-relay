@@ -155,9 +155,13 @@ An import from the page arrives as a series of `POST /admin/import` requests, ea
 
 These threads implement [NIP-9a](https://github.com/nostr-protocol/nips/pull/2194) push subscriptions. Like ReqMonitor, a single Push thread watches the DB file and scans the events added since its last run, so events from `strfry import`, `stream`, `sync` and `router` are pushed too.
 
-Each stored `kind 30390` event is loaded at startup into an [ActiveMonitors](#activemonitors) instance, keyed by the subscription's levId, and new ones are added as they show up in the scan. When an event matches, the thread checks that the subscription is still stored (so a replaced, deleted or expired one never fires), applies its `ignore` filters and the read restrictions for its author, and builds the request body.
+Each stored `kind 30390` event is loaded at startup into an [ActiveMonitors](#activemonitors) instance, keyed by the subscription's levId, and new ones are added as they show up in the scan. When an event matches, the thread checks that the subscription is still stored (so a replaced, deleted or expired one never fires), applies its `ignore_self` tag, its `ignore` filters and the read restrictions for its author, and builds the request body.
+
+For `ignore_self`, the Writer tells the Push thread the levId, id and AUTH pubkey of each event it stores from an authenticated connection, before the commit. The Push thread drains its inbox again once its read transaction is open, so it knows who sent every event that transaction can see. An entry is dropped once the scan has passed its levId, and the id check covers a levId reused after a failed commit.
 
 The requests go to a pool of PushSender threads (`relay.numThreads.push`). Each one connects, checks the resolved address, sends the `POST` and reads only the response status, all within `relay.push.timeoutSeconds`. When a callback answers `404`, the Push thread deletes the subscription in its own write transaction, unless it is the most recent event stored, in which case it waits for a newer one so the levId is never reused.
+
+A `kind 30390` from a client takes a detour before it is stored. Once the write policy accepts it, the Writer hands it to a PushSender thread, which sends the challenge `GET` and reads a body of at most 1 KiB (delimited by `Content-Length`, chunked or by closing). If the body is the challenge, the event goes back to the Writer, marked so it skips the write policy, otherwise the client gets `OK false`. Challenges count against `relay.push.maxPendingRequests` like the `POST`s.
 
 ## Cron
 

@@ -12,6 +12,7 @@
 #include <cctype>
 #include <chrono>
 #include <memory>
+#include <optional>
 
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -188,6 +189,9 @@ SSL_CTX *tlsContext() {
         if (!c) throw herr("can't create a TLS context");
         SSL_CTX_set_min_proto_version(c, TLS1_2_VERSION);
         SSL_CTX_set_verify(c, SSL_VERIFY_PEER, nullptr);
+#ifdef SSL_OP_IGNORE_UNEXPECTED_EOF
+        SSL_CTX_set_options(c, SSL_OP_IGNORE_UNEXPECTED_EOF); // servers often skip close_notify after a body delimited by closing
+#endif
         if (SSL_CTX_set_default_verify_paths(c) != 1) throw herr("can't load the system CA certificates");
         return c;
     }();
@@ -322,6 +326,95 @@ struct Connection : NonCopyable {
     }
 };
 
+struct ResponseReader {
+    Connection &conn;
+    std::string buf;
+
+    bool fill() {
+        char tmp[4096];
+        size_t n = conn.readSome(tmp, sizeof(tmp));
+        buf.append(tmp, n);
+        return n > 0;
+    }
+
+    std::string line(size_t maxSize) {
+        size_t end;
+
+        while ((end = buf.find("\r\n")) == std::string::npos) {
+            if (buf.size() > maxSize) throw herr("response line too long");
+            if (!fill()) throw herr("connection closed in the middle of the response");
+        }
+
+        if (end > maxSize) throw herr("response line too long");
+
+        std::string output = buf.substr(0, end);
+        buf.erase(0, end + 2);
+        return output;
+    }
+
+    std::string bytes(size_t size) {
+        while (buf.size() < size) {
+            if (!fill()) throw herr("connection closed in the middle of the response");
+        }
+
+        std::string output = buf.substr(0, size);
+        buf.erase(0, size);
+        return output;
+    }
+
+    std::string untilClosed(size_t maxSize) {
+        while (buf.size() <= maxSize && fill()) {}
+        if (buf.size() > maxSize) throw herr("response body too large");
+        return std::move(buf);
+    }
+
+    // "HTTP/1.1 200 OK"
+    int status() {
+        auto head = line(8192);
+
+        if (!head.starts_with("HTTP/1.") || head.size() < 12 || head[8] != ' ' ||
+            !std::all_of(head.begin() + 9, head.begin() + 12, [](unsigned char c){ return std::isdigit(c); })) {
+            throw herr("bad HTTP response");
+        }
+
+        return std::stoi(head.substr(9, 3));
+    }
+};
+
+std::string lowercase(std::string_view s) {
+    std::string output(s);
+    std::transform(output.begin(), output.end(), output.begin(), [](unsigned char c){ return std::tolower(c); });
+    return output;
+}
+
+std::string_view trim(std::string_view s) {
+    while (s.size() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);
+    while (s.size() && (s.back() == ' ' || s.back() == '\t')) s.remove_suffix(1);
+    return s;
+}
+
+uint64_t parseNumber(std::string_view s, int base) {
+    if (s.empty() || s.size() > 15) throw herr("bad number in response");
+
+    uint64_t output = 0;
+
+    for (unsigned char c : s) {
+        int digit = std::isdigit(c) ? c - '0' : base == 16 && std::isxdigit(c) ? std::tolower(c) - 'a' + 10 : -1;
+        if (digit < 0) throw herr("bad number in response");
+        output = output * base + digit;
+    }
+
+    return output;
+}
+
+std::string requestHead(std::string_view method, const HttpUrl &url) {
+    std::string request = std::string(method) + " " + url.target + " HTTP/1.1\r\n";
+    request += "Host: " + url.hostHeader() + "\r\n";
+    request += "User-Agent: strfry\r\n";
+    request += "Connection: close\r\n";
+    return request;
+}
+
 }
 
 
@@ -330,31 +423,66 @@ int httpPost(const HttpUrl &url, std::string_view contentType, std::string_view 
 
     conn.connect(url, allowPrivateAddresses);
 
-    std::string request = "POST " + url.target + " HTTP/1.1\r\n";
-    request += "Host: " + url.hostHeader() + "\r\n";
-    request += "User-Agent: strfry\r\n";
+    std::string request = requestHead("POST", url);
     request += "Content-Type: " + std::string(contentType) + "\r\n";
-    request += "Content-Length: " + std::to_string(body.size()) + "\r\n";
-    request += "Connection: close\r\n\r\n";
+    request += "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n";
     request += body;
 
     conn.writeAll(request);
 
-    std::string head;
-    char buf[1024];
+    return ResponseReader{conn}.status();
+}
 
-    while (head.find("\r\n") == std::string::npos) {
-        if (head.size() > 8192) throw herr("response status line too long");
-        size_t n = conn.readSome(buf, sizeof(buf));
-        if (n == 0) throw herr("connection closed before the response");
-        head.append(buf, n);
+HttpResponse httpGet(const HttpUrl &url, size_t maxBodySize, uint64_t timeoutSeconds, bool allowPrivateAddresses) {
+    Connection conn(Clock::now() + std::chrono::seconds(timeoutSeconds));
+
+    conn.connect(url, allowPrivateAddresses);
+    conn.writeAll(requestHead("GET", url) + "\r\n");
+
+    ResponseReader reader{conn};
+    HttpResponse res{ reader.status(), "" };
+
+    if (res.status < 200 || res.status >= 300) return res;
+
+    std::optional<uint64_t> contentLength;
+    bool chunked = false;
+    size_t headSize = 0;
+
+    while (1) {
+        auto header = reader.line(8192);
+        if (header.empty()) break;
+
+        headSize += header.size();
+        if (headSize > 65536) throw herr("response headers too large");
+
+        auto colon = header.find(':');
+        if (colon == std::string::npos) continue;
+
+        auto name = lowercase(trim(std::string_view(header).substr(0, colon)));
+        auto value = trim(std::string_view(header).substr(colon + 1));
+
+        if (name == "content-length") contentLength = parseNumber(value, 10);
+        else if (name == "transfer-encoding") chunked = lowercase(value).ends_with("chunked");
     }
 
-    // "HTTP/1.1 200 OK"
-    if (!head.starts_with("HTTP/1.") || head.size() < 12 || head[8] != ' ' ||
-        !std::all_of(head.begin() + 9, head.begin() + 12, [](unsigned char c){ return std::isdigit(c); })) {
-        throw herr("bad HTTP response");
+    if (res.status == 204) return res;
+
+    if (chunked) {
+        while (1) {
+            auto sizeLine = reader.line(1024);
+            uint64_t size = parseNumber(trim(std::string_view(sizeLine).substr(0, sizeLine.find(';'))), 16);
+            if (size == 0) break;
+            if (res.body.size() + size > maxBodySize) throw herr("response body too large");
+
+            res.body += reader.bytes(size);
+            if (reader.line(2).size()) throw herr("bad chunked encoding in response");
+        }
+    } else if (contentLength) {
+        if (*contentLength > maxBodySize) throw herr("response body too large");
+        res.body = reader.bytes(*contentLength);
+    } else {
+        res.body = reader.untilClosed(maxBodySize);
     }
 
-    return std::stoi(head.substr(9, 3));
+    return res;
 }

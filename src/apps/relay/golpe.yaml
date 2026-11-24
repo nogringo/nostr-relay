@@ -156,10 +156,10 @@ config:
     desc: "Allow callback URLs that point to loopback, private or link-local addresses. Only turn this on when the push server runs on a trusted local network"
     default: false
   - name: relay__push__timeoutSeconds
-    desc: "Time allowed for each callback request, from the DNS lookup to the response status"
+    desc: "Time allowed for each callback request, from the DNS lookup to the response"
     default: 10
   - name: relay__push__maxPendingRequests
-    desc: "Callback requests queued or in flight beyond this number are dropped"
+    desc: "Callback requests queued or in flight beyond this number are dropped, and new subscriptions refused"
     default: 10000
 
   - name: relay__negentropy__enabled

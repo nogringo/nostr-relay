@@ -22,6 +22,7 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
         std::string relay;
         std::string callback;
         bool includeEvent;
+        bool ignoreSelf;
         NostrFilterGroup ignore;
     };
 
@@ -30,6 +31,7 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
     ActiveMonitors monitors;
     flat_hash_map<uint64_t, ActivePush> pushes;
     std::vector<uint64_t> gone; // answered 404, deleted once they are not the most recent event
+    flat_hash_map<uint64_t, MsgPush::AuthedWrites::Write> authedWrites; // levId -> who sent it, until the scan reaches it
     const SubId subId("push");
     uint64_t currEventId;
     uint64_t lastSweep = hoytech::curr_time_s();
@@ -45,7 +47,7 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
             monitored.latestEventId = latestEventId;
             if (!monitors.addSub(txn, std::move(monitored), latestEventId)) throw herr("relay.maxSubsPerConnection is 0");
 
-            pushes.try_emplace(levId, ActivePush{ Bytes32(packed.pubkey()), std::move(sub.relay), std::move(sub.callback), sub.includeEvent, std::move(sub.ignore) });
+            pushes.try_emplace(levId, ActivePush{ Bytes32(packed.pubkey()), std::move(sub.relay), std::move(sub.callback), sub.includeEvent, sub.ignoreSelf, std::move(sub.ignore) });
         } catch (std::exception &e) {
             LW << "Ignoring push subscription levId=" << levId << ": " << e.what();
         }
@@ -56,7 +58,7 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
         pushes.erase(levId);
     };
 
-    auto notify = [&](lmdb::txn &txn, uint64_t pushLevId, uint64_t levId, const PackedEventView &packed){
+    auto notify = [&](lmdb::txn &txn, uint64_t pushLevId, uint64_t levId, const PackedEventView &packed, const Bytes32 &authedSender){
         auto it = pushes.find(pushLevId);
         if (it == pushes.end()) return;
 
@@ -69,6 +71,7 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
         const auto &push = it->second;
 
         if (!pushEnabled()) return;
+        if (push.ignoreSelf && authedSender == push.pubkey) return;
         if (push.ignore.doesMatch(packed)) return;
         if (!ReadRestrictor::shouldSendToSubscriber(txn, levId, packed, push.pubkey)) return;
 
@@ -107,16 +110,20 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
         if (pushes.size()) LI << "Loaded " << pushes.size() << " push subscriptions";
     }
 
-    while (1) {
-        auto newMsgs = thr.inbox.pop_all();
-
+    auto handle = [&](std::deque<MsgPush> newMsgs){
         for (auto &newMsg : newMsgs) {
             if (auto msg = std::get_if<MsgPush::CallbackGone>(&newMsg.msg)) {
                 if (!pushes.contains(msg->levId)) continue;
                 remove(msg->levId);
                 gone.push_back(msg->levId);
+            } else if (auto msg = std::get_if<MsgPush::AuthedWrites>(&newMsg.msg)) {
+                for (auto &write : msg->writes) authedWrites.insert_or_assign(write.levId, write);
             }
         }
+    };
+
+    while (1) {
+        handle(thr.inbox.pop_all());
 
         if (gone.size()) {
             auto txn = env.txn_rw();
@@ -140,14 +147,24 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
 
         auto txn = env.txn_ro();
 
+        // Every write this txn can see was announced before its commit
+        handle(thr.inbox.pop_all_no_wait());
+
         uint64_t latestEventId = getMostRecentLevId(txn);
         if (currEventId > latestEventId) currEventId = latestEventId;
 
         env.foreach_Event(txn, [&](auto &ev){
             PackedEventView packed(ev.buf);
+            Bytes32 authedSender;
+
+            // The id check covers a levId reused after a failed commit
+            if (auto it = authedWrites.find(ev.primaryKeyId); it != authedWrites.end()) {
+                if (it->second.id == packed.id()) authedSender = it->second.authed;
+                authedWrites.erase(it);
+            }
 
             monitors.process(txn, ev, [&](RecipientList &&recipients, uint64_t levId){
-                for (const auto &recipient : recipients) notify(txn, recipient.connId, levId, packed);
+                for (const auto &recipient : recipients) notify(txn, recipient.connId, levId, packed, authedSender);
             });
 
             if (packed.kind() == PUSH_SUBSCRIPTION_KIND) add(txn, ev.primaryKeyId, ev.primaryKeyId);
@@ -156,6 +173,15 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
         }, false, currEventId + 1);
 
         currEventId = latestEventId;
+
+        // Events deleted before the scan reached them
+        if (authedWrites.size()) {
+            std::vector<uint64_t> passed;
+            for (const auto &[levId, write] : authedWrites) {
+                if (levId <= latestEventId) passed.push_back(levId);
+            }
+            for (auto levId : passed) authedWrites.erase(levId);
+        }
 
         // Frees subscriptions deleted without ever matching again
         if (hoytech::curr_time_s() - lastSweep >= 60) {
@@ -173,11 +199,45 @@ void RelayServer::runPush(ThreadPool<MsgPush>::Thread &thr) {
 }
 
 
+// NIP-9a: the callback must echo a random challenge, so a subscription can't aim the relay at a server that never asked for it
+static void verifyCallback(const std::string &callback, SessionToken::Generator &challengeGenerator) {
+    auto url = HttpUrl::parse(callback);
+    auto challenge = challengeGenerator.get();
+
+    if (!url.target.ends_with('?') && !url.target.ends_with('&')) url.target += url.target.find('?') == std::string::npos ? '?' : '&';
+    url.target += "challenge=" + challenge;
+
+    auto res = httpGet(url, 1024, cfg().relay__push__timeoutSeconds, cfg().relay__push__allowPrivateCallbacks);
+
+    if (res.status < 200 || res.status >= 300) throw herr("answered ", res.status);
+    if (res.body != challenge) throw herr("the response is not the challenge");
+}
+
 void RelayServer::runPushSender(ThreadPool<MsgPushSender>::Thread &thr) {
+    SessionToken::Generator challengeGenerator;
+
     while (1) {
         auto newMsgs = thr.inbox.pop_all();
 
         for (auto &newMsg : newMsgs) {
+            if (auto verify = std::get_if<MsgPushSender::Verify>(&newMsg.msg)) {
+                auto &ev = verify->event;
+                auto idHex = to_hex(PackedEventView(ev.packedStr).id());
+
+                try {
+                    PushSubscription sub(tao::json::from_string(ev.jsonStr));
+                    verifyCallback(sub.callback, challengeGenerator);
+                    ev.callbackVerified = true;
+                } catch (std::exception &e) {
+                    LI << "[" << ev.connId << "] Push subscription " << idHex << " refused, its callback failed the challenge: " << e.what();
+                    sendOKResponse(ev.connId, idHex, false, std::string("invalid: callback verification failed: ") + e.what());
+                }
+
+                pendingPushes--;
+                if (ev.callbackVerified) tpWriter.dispatch(0, MsgWriter{std::move(ev)});
+                continue;
+            }
+
             auto &post = std::get<MsgPushSender::Post>(newMsg.msg);
             std::string host = "?";
 

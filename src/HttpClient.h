@@ -21,5 +21,11 @@ struct HttpUrl {
 // False for loopback, private, link-local, multicast and other special-purpose addresses
 bool isPublicIp(const std::string &ip);
 
-// Returns the response status. Redirects are not followed.
+struct HttpResponse {
+    int status;
+    std::string body; // only read for a 2xx status
+};
+
+// Redirects are not followed by either
 int httpPost(const HttpUrl &url, std::string_view contentType, std::string_view body, uint64_t timeoutSeconds, bool allowPrivateAddresses);
+HttpResponse httpGet(const HttpUrl &url, size_t maxBodySize, uint64_t timeoutSeconds, bool allowPrivateAddresses);
